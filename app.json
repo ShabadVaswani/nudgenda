@@ -1,16 +1,18 @@
 {
   "expo": {
-    "name": "calendar-agent",
-    "slug": "calendar-agent",
+    "name": "Nudgenda",
+    "slug": "nudgenda",
     "version": "1.0.0",
     "orientation": "portrait",
+    "platforms": ["android", "web"],
     "icon": "./assets/images/icon.png",
-    "scheme": "calendaragent",
-    "userInterfaceStyle": "automatic",
+    "scheme": "nudgenda",
+    "userInterfaceStyle": "light",
     "ios": {
       "icon": "./assets/expo.icon"
     },
     "android": {
+      "package": "com.shabadvaswani.nudgenda",
       "adaptiveIcon": {
         "backgroundColor": "#E6F4FE",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -25,10 +27,11 @@
     },
     "plugins": [
       "expo-router",
+      "expo-calendar",
       [
         "expo-splash-screen",
         {
-          "backgroundColor": "#208AEF",
+          "backgroundColor": "#F6F0E3",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
         }

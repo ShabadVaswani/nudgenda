@@ -1,56 +1,66 @@
-# Welcome to your Expo app 👋
+# Nudgenda
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Android-first, local-first calendar planning assistant with a conversational interface and Google Calendar as the calendar source of truth.
 
-## Get started
+## Current prototype
 
-1. Install dependencies
+- Today timeline with tappable schedule blocks
+- Pull-down gesture from Today to open full-page Chat
+- Home microphone opens Chat already listening
+- Chat microphone toggles listening on and off
+- Google Calendar-style event details, including a description-based sub-schedule
+- Calendar source and Android permission settings screen
+- Direct access to Google calendars already synchronized on the phone
+- Swappable calendar repository with a runnable demo-data fallback
+- Read, create, update, delete, and open system calendar events
+- No Nudgenda backend, Google Cloud project, or OAuth client identifiers
+- Muted neo-brutalist visual system with bundled Archivo Black and Kalam fonts
 
-   ```bash
-   npm install
-   ```
+The current voice transcription remains a UI simulation. On Android, the app requests Calendar permission and uses the device calendar database. Android's existing account sync propagates changes to Google Calendar. OpenRouter, notifications, and the Android widget come next.
 
-2. Start the app
+## Run locally
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
-
-```bash
-npm run reset-project
+```powershell
+pnpm install
+pnpm start
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+Press `a` in Expo CLI to open Android, or run:
 
-### Other setup steps
+```powershell
+pnpm android
+```
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+The early UI can also be reviewed in a browser with `pnpm web`. Device calendar access requires an Android development build rather than Expo Go.
 
-## Learn more
+## Download a development APK from GitHub
 
-To learn more about developing your project with Expo, look at the following resources:
+The repository includes an **Android development APK** workflow. After the project is pushed to GitHub:
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+1. Open the repository's **Actions** tab.
+2. Select **Android development APK**.
+3. Choose **Run workflow**.
+4. Download the `nudgenda-development-apk` artifact when the run finishes.
+5. Extract and install `nudgenda-development.apk` on an Android device.
 
-## Join the community
+The workflow also runs automatically when app code is pushed to `main`. It builds on GitHub's Android runner, so a local Android SDK is not required. The artifact is intentionally a development build and expires after 14 days. A permanently signed APK and automatic GitHub Release publishing will be added before the first public release.
 
-Join our community of developers creating universal apps.
+No Google OAuth credentials are required. Never add an Android signing keystore to the repository.
 
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+## Project structure
+
+```text
+src/app/             Expo Router screens
+src/components/      Reusable neo-brutalist UI components
+src/calendar/        Device calendar bridge, repository types, demo source
+src/constants/       Design tokens
+src/data/            Temporary schedule fixtures
+```
+
+The browser preview intentionally uses demo events. The installable Android build prompts for Calendar permission and then loads synced Google calendars from the device.
+
+## Checks
+
+```powershell
+pnpm check
+```

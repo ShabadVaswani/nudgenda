@@ -15,8 +15,8 @@ export const colors = {
 } as const;
 
 export const fonts = {
-  display: 'ArchivoBlack_400Regular',
-  hand: 'Kalam_400Regular',
+  display: 'BowlbyOneSC_400Regular',
+  hand: 'PatrickHand_400Regular',
   handBold: 'Kalam_700Bold',
 } as const;
 

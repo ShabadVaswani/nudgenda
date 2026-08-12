@@ -11,13 +11,14 @@ import {
 import { DemoCalendarRepository } from '@/calendar/demoCalendar';
 import { deviceCalendar } from '@/calendar/deviceCalendar';
 import type { DeviceCalendarPermissionStatus } from '@/calendar/deviceCalendar.types';
+import { googleCalendar } from '@/calendar/googleCalendar';
 import type {
   CalendarEvent,
   CalendarEventDraft,
   CalendarRepository,
 } from '@/calendar/types';
 
-type CalendarSource = 'demo' | 'device';
+type CalendarSource = 'demo' | 'device' | 'google';
 type ConnectionStatus = 'checking' | 'connected' | 'demo' | 'error' | 'requesting';
 
 type CalendarContextValue = {
@@ -25,11 +26,15 @@ type CalendarContextValue = {
   calendarCount: number;
   calendarPermission: DeviceCalendarPermissionStatus;
   connectDeviceCalendar: () => Promise<void>;
+  connectGoogleCalendar: () => Promise<void>;
   connectionStatus: ConnectionStatus;
   createEvent: (event: CalendarEventDraft) => Promise<CalendarEvent>;
+  disconnectGoogleCalendar: () => Promise<void>;
   events: CalendarEvent[];
   getEvent: (id?: string) => CalendarEvent | undefined;
   isDeviceCalendarAvailable: boolean;
+  isGoogleCalendarAvailable: boolean;
+  isGoogleCalendarConfigured: boolean;
   isLoading: boolean;
   openEvent: (eventId: string) => Promise<boolean>;
   permissionCanAskAgain: boolean;
@@ -47,6 +52,21 @@ type CalendarContextValue = {
 
 const CalendarContext = createContext<CalendarContextValue | null>(null);
 const demoRepository = new DemoCalendarRepository();
+
+function normalizedRouteId(value?: string) {
+  if (!value) return value;
+  let normalized = value;
+  for (let pass = 0; pass < 3; pass += 1) {
+    try {
+      const decoded = decodeURIComponent(normalized);
+      if (decoded === normalized) break;
+      normalized = decoded;
+    } catch {
+      break;
+    }
+  }
+  return normalized;
+}
 
 export function CalendarProvider({ children }: PropsWithChildren) {
   const [calendarAccountLabel, setCalendarAccountLabel] = useState<string>();
@@ -98,6 +118,27 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     }
   }, []);
 
+  const activateGoogleCalendar = useCallback(async () => {
+    setIsLoading(true);
+    setSyncError(undefined);
+    try {
+      const connection = await googleCalendar.connect();
+      const nextEvents = await connection.repository.listDay(new Date());
+      setCalendarAccountLabel(connection.accountLabel);
+      setCalendarCount(connection.calendarCount);
+      setEvents(nextEvents);
+      setRepository(connection.repository);
+      setSource('google');
+      setConnectionStatus('connected');
+    } catch (error) {
+      setConnectionStatus('error');
+      setSyncError(error instanceof Error ? error.message : 'Google Calendar connection failed');
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let isCurrent = true;
     const loadDemo = async () => {
@@ -114,6 +155,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     };
 
     if (!deviceCalendar.isAvailable) {
+      void googleCalendar.prepare().catch(() => undefined);
       void loadDemo();
       return () => {
         isCurrent = false;
@@ -158,14 +200,26 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     await activateDeviceCalendar();
   }, [activateDeviceCalendar]);
 
-  const useDemoCalendar = useCallback(() => {
+  const connectGoogleCalendar = useCallback(async () => {
+    setConnectionStatus('requesting');
+    setSyncError(undefined);
+    await activateGoogleCalendar();
+  }, [activateGoogleCalendar]);
+
+  const switchToDemoCalendar = useCallback(() => {
     setCalendarAccountLabel(undefined);
     setCalendarCount(0);
     setRepository(demoRepository);
     setSource('demo');
     setConnectionStatus('demo');
     setSyncError(undefined);
+    void demoRepository.listDay(new Date()).then(setEvents);
   }, []);
+
+  const disconnectGoogleCalendar = useCallback(async () => {
+    await googleCalendar.disconnect();
+    switchToDemoCalendar();
+  }, [switchToDemoCalendar]);
 
   const value = useMemo<CalendarContextValue>(
     () => ({
@@ -173,15 +227,20 @@ export function CalendarProvider({ children }: PropsWithChildren) {
       calendarCount,
       calendarPermission,
       connectDeviceCalendar,
+      connectGoogleCalendar,
       connectionStatus,
       createEvent: async (event) => {
         const created = await repository.create(event);
         await refresh();
         return created;
       },
+      disconnectGoogleCalendar,
       events,
-      getEvent: (id) => events.find((event) => event.id === id),
+      getEvent: (id) =>
+        events.find((event) => normalizedRouteId(event.id) === normalizedRouteId(id)),
       isDeviceCalendarAvailable: deviceCalendar.isAvailable,
+      isGoogleCalendarAvailable: googleCalendar.isAvailable,
+      isGoogleCalendarConfigured: googleCalendar.isConfigured,
       isLoading,
       openEvent: async (eventId) => {
         if (!repository.open) return false;
@@ -201,14 +260,16 @@ export function CalendarProvider({ children }: PropsWithChildren) {
         await refresh();
         return updated;
       },
-      useDemoCalendar,
+      useDemoCalendar: switchToDemoCalendar,
     }),
     [
       calendarAccountLabel,
       calendarCount,
       calendarPermission,
       connectDeviceCalendar,
+      connectGoogleCalendar,
       connectionStatus,
+      disconnectGoogleCalendar,
       events,
       isLoading,
       permissionCanAskAgain,
@@ -216,7 +277,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
       repository,
       source,
       syncError,
-      useDemoCalendar,
+      switchToDemoCalendar,
     ],
   );
 

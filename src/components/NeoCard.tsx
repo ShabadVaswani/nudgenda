@@ -1,16 +1,17 @@
 import type { PropsWithChildren } from 'react';
-import { StyleSheet, View, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { colors, neoShadow, radii } from '@/constants/design';
 
 type Props = PropsWithChildren<{
   backgroundColor?: string;
-  style?: ViewStyle;
+  shadow?: boolean;
+  style?: StyleProp<ViewStyle>;
 }>;
 
-export function NeoCard({ children, backgroundColor = colors.white, style }: Props) {
+export function NeoCard({ children, backgroundColor = colors.white, shadow = true, style }: Props) {
   return (
-    <View style={[styles.card, neoShadow, { backgroundColor }, style]}>
+    <View style={[styles.card, shadow && neoShadow, { backgroundColor }, style]}>
       {children}
     </View>
   );

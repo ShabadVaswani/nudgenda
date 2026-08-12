@@ -11,14 +11,14 @@ import { colors, fonts, spacing } from '@/constants/design';
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string }>();
-  const { getEvent, isLoading, openEvent } = useCalendar();
+  const { getEvent, isLoading, openEvent, source } = useCalendar();
   const calendarEvent = getEvent(params.id);
 
   if (!calendarEvent) {
     return (
       <View style={styles.screen}>
         <SafeAreaView style={styles.missingEvent}>
-          <Pressable onPress={() => router.back()}>
+          <Pressable onPress={() => router.replace('/')}>
             <Text style={styles.backIcon}>{'\u2190'}</Text>
           </Pressable>
           <Text style={styles.missingEventText}>
@@ -34,8 +34,8 @@ export default function EventDetailScreen() {
     try {
       if (!(await openEvent(calendarEvent.id))) {
         Alert.alert(
-          'Demo calendar',
-          'System calendar events open from the installable Android app.',
+          'Calendar link unavailable',
+          'Connect Google Calendar in the browser or use the installable Android app.',
         );
       }
     } catch (error) {
@@ -53,7 +53,7 @@ export default function EventDetailScreen() {
           <Pressable
             accessibilityLabel="Go back"
             hitSlop={12}
-            onPress={() => router.back()}
+            onPress={() => router.replace('/')}
             style={styles.backButton}>
             <Text style={styles.backIcon}>{'\u2190'}</Text>
           </Pressable>
@@ -103,7 +103,10 @@ export default function EventDetailScreen() {
             accessibilityRole="button"
             onPress={() => void openInCalendar()}
             style={({ pressed }) => [styles.openButton, pressed && styles.buttonPressed]}>
-            <Text style={styles.openButtonText}>{'\u2197  '}open in system calendar</Text>
+            <Text style={styles.openButtonText}>
+              {'\u2197  '}
+              {source === 'google' ? 'open in Google Calendar' : 'open in system calendar'}
+            </Text>
           </Pressable>
         </ScrollView>
       </SafeAreaView>
@@ -117,11 +120,17 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   safeArea: {
+    alignSelf: 'center',
     flex: 1,
+    maxWidth: 820,
+    width: '100%',
   },
   missingEvent: {
+    alignSelf: 'center',
     flex: 1,
+    maxWidth: 820,
     padding: spacing.lg,
+    width: '100%',
   },
   missingEventText: {
     color: colors.ink,

@@ -9,14 +9,14 @@ Android-first, local-first calendar planning assistant with a conversational int
 - Home microphone opens Chat already listening
 - Chat microphone toggles listening on and off
 - Google Calendar-style event details, including a description-based sub-schedule
-- Calendar source and Android permission settings screen
+- Calendar source, web OAuth, and Android permission settings screen
 - Direct access to Google calendars already synchronized on the phone
 - Swappable calendar repository with a runnable demo-data fallback
 - Read, create, update, delete, and open system calendar events
-- No Nudgenda backend, Google Cloud project, or OAuth client identifiers
+- No Nudgenda backend or client secret in the app
 - Muted neo-brutalist visual system with bundled Archivo Black and Kalam fonts
 
-The current voice transcription remains a UI simulation. On Android, the app requests Calendar permission and uses the device calendar database. Android's existing account sync propagates changes to Google Calendar. OpenRouter, notifications, and the Android widget come next.
+The current voice transcription remains a UI simulation. On Android, the app requests Calendar permission and uses the device calendar database. Android's existing account sync propagates changes to Google Calendar. In the browser, Google Identity Services supplies a temporary in-memory access token and the app calls Google Calendar directly. OpenRouter, notifications, and the Android widget come next.
 
 ## Run locally
 
@@ -31,7 +31,7 @@ Press `a` in Expo CLI to open Android, or run:
 pnpm android
 ```
 
-The early UI can also be reviewed in a browser with `pnpm web`. Device calendar access requires an Android development build rather than Expo Go.
+Device calendar access requires an Android development build rather than Expo Go.
 
 ## Download a development APK from GitHub
 
@@ -52,12 +52,12 @@ No Google OAuth credentials are required. Never add an Android signing keystore 
 ```text
 src/app/             Expo Router screens
 src/components/      Reusable neo-brutalist UI components
-src/calendar/        Device calendar bridge, repository types, demo source
+src/calendar/        Android, Google web, and demo calendar repositories
 src/constants/       Design tokens
 src/data/            Temporary schedule fixtures
 ```
 
-The browser preview intentionally uses demo events. The installable Android build prompts for Calendar permission and then loads synced Google calendars from the device.
+The browser starts with demo events until Google Calendar is connected. The installable Android build prompts for Calendar permission and then loads synced Google calendars from the device.
 
 ## Checks
 

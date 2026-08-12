@@ -4,7 +4,10 @@
     "slug": "nudgenda",
     "version": "1.0.0",
     "orientation": "portrait",
-    "platforms": ["android", "web"],
+    "platforms": [
+      "android",
+      "web"
+    ],
     "icon": "./assets/images/icon.png",
     "scheme": "nudgenda",
     "userInterfaceStyle": "light",
@@ -34,6 +37,18 @@
           "backgroundColor": "#F6F0E3",
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 76
+        }
+      ],
+      "expo-secure-store",
+      [
+        "expo-speech-recognition",
+        {
+          "microphonePermission": "Allow Nudgenda to use your microphone for speech-to-text.",
+          "speechRecognitionPermission": "Allow Nudgenda to turn your speech into text.",
+          "androidSpeechServicePackages": [
+            "com.google.android.googlequicksearchbox",
+            "com.google.android.tts"
+          ]
         }
       ]
     ],

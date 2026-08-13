@@ -266,7 +266,9 @@ export default function TodayScreen() {
     return (
       <View style={styles.screen}>
         <SafeAreaView style={styles.connectionGate} edges={['top', 'bottom']}>
-          <OutlinedTitle style={styles.connectionLogo}>NUDGENDA</OutlinedTitle>
+          <OutlinedTitle style={styles.connectionLogo} variant="brand">
+            NUDGENDA
+          </OutlinedTitle>
           <Text style={styles.connectionGateTagline}>your day, gently nudged into place</Text>
 
           <NeoCard backgroundColor={colors.aqua} style={styles.connectionGateCard}>

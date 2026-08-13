@@ -1,10 +1,19 @@
-import { StyleSheet, Text, View, type StyleProp, type TextStyle, type ViewStyle } from 'react-native';
+import {
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+  type StyleProp,
+  type TextStyle,
+  type ViewStyle,
+} from 'react-native';
 
 import { colors, fonts } from '@/constants/design';
 
 type Props = {
   children: string;
   style?: StyleProp<TextStyle>;
+  variant?: 'default' | 'brand';
 };
 
 const outlineOffsets = [
@@ -18,37 +27,68 @@ const outlineOffsets = [
   [2, 2],
 ] as const;
 
-export function OutlinedTitle({ children, style }: Props) {
-  const flattened = StyleSheet.flatten(style) ?? {};
-  const containerStyle: ViewStyle = {
-    alignSelf: flattened.alignSelf,
-    flex: flattened.flex,
-    marginBottom: flattened.marginBottom,
-    marginLeft: flattened.marginLeft,
-    marginRight: flattened.marginRight,
-    marginTop: flattened.marginTop,
-    maxWidth: flattened.maxWidth,
-    width: flattened.width,
-  };
-  const textOverrides: TextStyle = {
-    fontSize: flattened.fontSize,
-    letterSpacing: flattened.letterSpacing,
-    lineHeight: flattened.lineHeight,
-    textAlign: flattened.textAlign,
-  };
+function pickDefined<T extends object>(source: object, keys: readonly (keyof T)[]) {
+  const target = {} as T;
+  const values = source as T;
+  keys.forEach((key) => {
+    if (values[key] !== undefined) target[key] = values[key];
+  });
+  return target;
+}
+
+export function OutlinedTitle({ children, style, variant = 'default' }: Props) {
+  const { width: windowWidth } = useWindowDimensions();
+  const brandFontSize = Math.min(58, Math.max(50, windowWidth * 0.14));
+  const variantStyle: TextStyle | undefined =
+    variant === 'brand'
+      ? {
+          fontSize: brandFontSize,
+          letterSpacing: brandFontSize * -0.027,
+          lineHeight: Math.ceil(brandFontSize * 1.08),
+        }
+      : undefined;
+  const flattened = StyleSheet.flatten([variantStyle, style]) ?? {};
+  // Undefined values can override the base metrics on native. Only forward values
+  // that callers actually supplied so Android keeps the intended display size.
+  const containerStyle = pickDefined<ViewStyle>(flattened, [
+    'alignSelf',
+    'flex',
+    'marginBottom',
+    'marginLeft',
+    'marginRight',
+    'marginTop',
+    'maxWidth',
+    'width',
+  ]);
+  const textOverrides = pickDefined<TextStyle>(flattened, [
+    'fontSize',
+    'letterSpacing',
+    'lineHeight',
+    'textAlign',
+  ]);
+
+  const textProps =
+    variant === 'brand'
+      ? ({ allowFontScaling: false } as const)
+      : ({ maxFontSizeMultiplier: 1.2 } as const);
 
   return (
     <View style={[styles.container, containerStyle]}>
       <Text
+        {...textProps}
         accessible={false}
         style={[styles.title, textOverrides, styles.layer, styles.deepShadow]}>
         {children}
       </Text>
-      <Text accessible={false} style={[styles.title, textOverrides, styles.layer, styles.accent]}>
+      <Text
+        {...textProps}
+        accessible={false}
+        style={[styles.title, textOverrides, styles.layer, styles.accent]}>
         {children}
       </Text>
       {outlineOffsets.map(([x, y]) => (
         <Text
+          {...textProps}
           accessible={false}
           key={`${x}:${y}`}
           style={[
@@ -61,7 +101,10 @@ export function OutlinedTitle({ children, style }: Props) {
           {children}
         </Text>
       ))}
-      <Text accessibilityRole="header" style={[styles.title, textOverrides, styles.fill]}>
+      <Text
+        {...textProps}
+        accessibilityRole="header"
+        style={[styles.title, textOverrides, styles.fill]}>
         {children}
       </Text>
     </View>

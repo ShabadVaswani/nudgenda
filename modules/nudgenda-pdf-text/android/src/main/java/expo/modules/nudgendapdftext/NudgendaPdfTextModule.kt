@@ -18,7 +18,7 @@ class NudgendaPdfTextModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("NudgendaPdfText")
 
-    AsyncFunction<String>("extractTextAsync") { uriValue: String ->
+    AsyncFunction("extractTextAsync") { uriValue: String ->
       PDFBoxResourceLoader.init(context.applicationContext)
       val uri = Uri.parse(uriValue)
       openInputStream(uri).use { input ->

@@ -6,6 +6,7 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  type LayoutChangeEvent,
   type ViewStyle,
   View,
 } from 'react-native';
@@ -17,13 +18,13 @@ import type { CalendarEvent } from '@/calendar/types';
 import { MicButton } from '@/components/MicButton';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
+import { getScheduleBlockDensity } from '@/components/scheduleBlockLayout';
 import { colors, fonts, spacing } from '@/constants/design';
 import type { ScheduleItem } from '@/data/schedule';
 
 const HOUR_HEIGHT = 92;
 const EVENT_GAP = 5;
 const TITLE_HEIGHT_THRESHOLD = 24;
-const DETAIL_HEIGHT_THRESHOLD = 54;
 const MIN_RENDERABLE_EVENT_MINUTES =
   ((TITLE_HEIGHT_THRESHOLD + EVENT_GAP) / HOUR_HEIGHT) * 60;
 
@@ -143,9 +144,27 @@ function ScheduleBlock({
   style?: ViewStyle;
 }) {
   const isAllDay = item.startLabel === 'All day';
-  const showTitle = availableHeight === undefined || availableHeight >= TITLE_HEIGHT_THRESHOLD;
-  const showDetails = availableHeight === undefined || availableHeight >= DETAIL_HEIGHT_THRESHOLD;
-  const isTiny = availableHeight !== undefined && !showTitle;
+  const [layout, setLayout] = useState({
+    height: availableHeight ?? 58,
+    width: Number.POSITIVE_INFINITY,
+  });
+  const density = getScheduleBlockDensity(layout);
+  const isTiny = density === 'tiny';
+  const isCompact = density === 'compact';
+  const isLarge = density === 'large';
+  const showTitle = !isTiny;
+  const showDetails = density === 'standard' || isLarge;
+  const showSymbol = showDetails && layout.width >= 160;
+  const showDoodle = isLarge && layout.width >= 250;
+
+  const handleLayout = (event: LayoutChangeEvent) => {
+    const { height, width } = event.nativeEvent.layout;
+    setLayout((current) =>
+      Math.abs(current.height - height) < 0.5 && Math.abs(current.width - width) < 0.5
+        ? current
+        : { height, width },
+    );
+  };
 
   return (
     <Pressable
@@ -153,18 +172,29 @@ function ScheduleBlock({
       accessibilityHint="Opens the Google Calendar event details"
       accessibilityRole="button"
       hitSlop={isTiny ? 8 : 0}
+      onLayout={handleLayout}
       onPress={onPress}
       style={({ pressed }) => [styles.blockPosition, style, pressed && styles.blockPressed]}>
       <NeoCard
         backgroundColor={item.color}
         shadow={!isTiny}
-        style={[styles.scheduleBlock, isTiny && styles.tinyScheduleBlock]}>
-        {showDetails && <Text style={styles.blockSymbol}>{item.symbol}</Text>}
+        style={[
+          styles.scheduleBlock,
+          isTiny && styles.tinyScheduleBlock,
+          isCompact && styles.compactScheduleBlock,
+          isLarge && styles.largeScheduleBlock,
+        ]}>
+        {isTiny && <View style={styles.tinyBlockMark} />}
+        {showSymbol && <Text style={styles.blockSymbol}>{item.symbol}</Text>}
         {showTitle && (
           <View style={styles.blockCopy}>
             <Text
               numberOfLines={1}
-              style={[styles.blockTitle, !showDetails && styles.compactBlockTitle]}>
+              style={[
+                styles.blockTitle,
+                isCompact && styles.compactBlockTitle,
+                isLarge && styles.largeBlockTitle,
+              ]}>
               {item.title}
             </Text>
             {showDetails && (
@@ -172,9 +202,14 @@ function ScheduleBlock({
                 {isAllDay ? 'All day' : `${item.startLabel}–${item.endLabel}`}
               </Text>
             )}
+            {isLarge && (
+              <Text numberOfLines={1} style={styles.blockMeta}>
+                {item.calendarName}
+              </Text>
+            )}
           </View>
         )}
-        {showDetails && <Text style={styles.blockDoodle}>·</Text>}
+        {showDoodle && <Text style={styles.blockDoodle}>·</Text>}
       </NeoCard>
     </Pressable>
   );
@@ -701,12 +736,31 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     flexDirection: 'row',
     height: '100%',
+    overflow: 'hidden',
     paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
   },
   tinyScheduleBlock: {
     borderRadius: 5,
     borderWidth: 2,
+    justifyContent: 'center',
     paddingHorizontal: 0,
+    paddingVertical: 0,
+  },
+  compactScheduleBlock: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 0,
+  },
+  largeScheduleBlock: {
+    paddingVertical: spacing.sm,
+  },
+  tinyBlockMark: {
+    backgroundColor: colors.ink,
+    borderRadius: 2,
+    height: 2,
+    maxWidth: 24,
+    opacity: 0.35,
+    width: '35%',
   },
   blockPressed: {
     opacity: 0.8,
@@ -721,6 +775,7 @@ const styles = StyleSheet.create({
   },
   blockCopy: {
     flex: 1,
+    justifyContent: 'center',
     minWidth: 0,
   },
   blockTitle: {
@@ -733,11 +788,22 @@ const styles = StyleSheet.create({
     fontSize: 16,
     lineHeight: 18,
   },
+  largeBlockTitle: {
+    fontSize: 21,
+    lineHeight: 24,
+  },
   blockTime: {
     color: colors.muted,
     fontFamily: fonts.hand,
     fontSize: 13,
     marginTop: 1,
+  },
+  blockMeta: {
+    color: colors.muted,
+    fontFamily: fonts.hand,
+    fontSize: 12,
+    marginTop: 2,
+    opacity: 0.9,
   },
   blockDoodle: {
     color: colors.ink,

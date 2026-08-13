@@ -1,4 +1,5 @@
 import type { CalendarEvent } from '@/calendar/types';
+import { normalizeCalendarDescription } from '@/calendar/description';
 import { colors } from '@/constants/design';
 import type { ScheduleItem } from '@/data/schedule';
 
@@ -22,6 +23,7 @@ export function presentCalendarEvent(event: CalendarEvent): ScheduleItem {
   const start = getEventDate(event.start);
   const end = getEventDate(event.end);
   const reminder = event.reminders?.overrides?.[0];
+  const description = normalizeCalendarDescription(event.description);
 
   return {
     calendarName:
@@ -34,7 +36,7 @@ export function presentCalendarEvent(event: CalendarEvent): ScheduleItem {
           weekday: 'short',
         }).format(start)
       : 'All day',
-    description: event.description?.split('\n').filter(Boolean),
+    description: description ? description.split('\n') : undefined,
     endLabel: formatTime(end),
     htmlLink: event.htmlLink,
     id: event.id,

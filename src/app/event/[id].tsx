@@ -74,8 +74,8 @@ export default function EventDetailScreen() {
             {!!event.description?.length && (
               <View style={styles.description}>
                 <Text style={styles.sectionLabel}>DESCRIPTION</Text>
-                {event.description.map((line) => (
-                  <Text key={line} style={styles.descriptionLine}>
+                {event.description.map((line, index) => (
+                  <Text key={`${index}:${line}`} style={styles.descriptionLine}>
                     {line}
                   </Text>
                 ))}

@@ -4,6 +4,7 @@ import type {
   DeviceCalendarBridge,
   DeviceCalendarPermission,
 } from '@/calendar/deviceCalendar.types';
+import { openDeviceCalendarEvent } from '@/calendar/openDeviceEvent';
 import type {
   CalendarEvent,
   CalendarEventDraft,
@@ -161,8 +162,7 @@ class AndroidCalendarRepository implements CalendarRepository {
   }
 
   async open(eventId: string) {
-    const event = await Calendar.ExpoCalendarEvent.get(eventId);
-    await event.openInCalendar(null);
+    await openDeviceCalendarEvent(eventId, Calendar.ExpoCalendarEvent.get);
   }
 }
 

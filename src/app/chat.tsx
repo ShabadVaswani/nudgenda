@@ -121,6 +121,11 @@ export default function ChatScreen() {
     });
   }, [events, message, startVoice]);
 
+  const goBack = () => {
+    if (router.canGoBack()) router.back();
+    else router.replace('/');
+  };
+
   useEffect(() => {
     if (params.listening !== '1' || hasAutoStartedVoice.current) return;
     hasAutoStartedVoice.current = true;
@@ -219,7 +224,7 @@ export default function ChatScreen() {
           <Pressable
             accessibilityLabel="Go back"
             hitSlop={12}
-            onPress={() => router.replace('/')}
+            onPress={goBack}
             style={styles.headerButton}>
             <Text style={styles.headerIcon}>←</Text>
           </Pressable>

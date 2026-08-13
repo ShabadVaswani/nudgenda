@@ -21,6 +21,7 @@ import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { getScheduleBlockDensity } from '@/components/scheduleBlockLayout';
 import { colors, fonts, spacing } from '@/constants/design';
 import type { ScheduleItem } from '@/data/schedule';
+import { isUpwardChatIntent, shouldOpenChatFromSwipe } from '@/navigation/homeChatGesture';
 
 const HOUR_HEIGHT = 92;
 const EVENT_GAP = 5;
@@ -244,10 +245,9 @@ export default function TodayScreen() {
   const panResponder = useMemo(
     () =>
       PanResponder.create({
-        onMoveShouldSetPanResponder: (_, gesture) =>
-          gesture.dy > 16 && Math.abs(gesture.dy) > Math.abs(gesture.dx) * 1.4,
+        onMoveShouldSetPanResponder: (_, gesture) => isUpwardChatIntent(gesture),
         onPanResponderRelease: (_, gesture) => {
-          if (gesture.dy > 72) {
+          if (shouldOpenChatFromSwipe(gesture)) {
             router.push('/chat');
           }
         },
@@ -356,7 +356,7 @@ export default function TodayScreen() {
     <View style={styles.screen}>
       <SafeAreaView style={styles.safeArea} edges={['top', 'bottom']}>
         <View style={styles.content}>
-          <View style={styles.topGestureArea} {...panResponder.panHandlers}>
+          <View style={styles.topGestureArea}>
             <View style={styles.headerRow}>
               <View>
                 <OutlinedTitle>TODAY</OutlinedTitle>
@@ -445,7 +445,7 @@ export default function TodayScreen() {
             </View>
           </ScrollView>
 
-          <View style={styles.micArea}>
+          <View style={styles.micArea} {...panResponder.panHandlers}>
             <MicButton onPress={openChatListening} />
           </View>
         </View>

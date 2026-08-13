@@ -12,6 +12,7 @@ export type CalendarReminder = {
 export type CalendarEvent = {
   id: string;
   calendarId: string;
+  canModify?: boolean;
   calendarColor?: string;
   calendarName?: string;
   summary: string;
@@ -19,6 +20,8 @@ export type CalendarEvent = {
   location?: string;
   colorId?: string;
   htmlLink?: string;
+  isRecurring?: boolean;
+  recurringEventId?: string;
   start: CalendarDateTime;
   end: CalendarDateTime;
   reminders?: {
@@ -27,7 +30,16 @@ export type CalendarEvent = {
   };
 };
 
-export type CalendarEventDraft = Omit<CalendarEvent, 'id' | 'htmlLink'>;
+export type CalendarEventDraft = Omit<
+  CalendarEvent,
+  'id' | 'htmlLink' | 'canModify' | 'isRecurring' | 'recurringEventId'
+>;
+
+export type CalendarEventUpdateOptions = {
+  instanceStart?: CalendarDateTime;
+  recurringEventId?: string;
+  scope?: 'single' | 'series';
+};
 
 export interface CalendarRepository {
   create(event: CalendarEventDraft): Promise<CalendarEvent>;
@@ -38,5 +50,6 @@ export interface CalendarRepository {
     eventId: string,
     changes: Partial<CalendarEventDraft>,
     calendarId?: string,
+    options?: CalendarEventUpdateOptions,
   ): Promise<CalendarEvent>;
 }

@@ -1,20 +1,33 @@
-import { useRouter } from 'expo-router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  BackHandler,
+  Modal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   type LayoutChangeEvent,
+  type NativeScrollEvent,
+  type NativeSyntheticEvent,
   type ViewStyle,
   View,
 } from 'react-native';
+import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCalendar } from '@/calendar/CalendarProvider';
 import { deduplicateCalendarEvents } from '@/calendar/deduplicate';
 import { presentCalendarEvent } from '@/calendar/presentation';
+import {
+  clamp,
+  conflictingEvents,
+  formatMinuteOfDay,
+  shiftedEventTimes,
+  snappedStartMinute,
+} from '@/calendar/reschedule';
 import {
   assignTimelineLanes,
   getAdaptiveHourHeight,
@@ -31,11 +44,20 @@ import { isUpwardChatIntent, shouldOpenChatFromSwipe } from '@/navigation/homeCh
 const EVENT_GAP = 5;
 
 type TimelineItem = ScheduleItem & {
+  calendarEvent: CalendarEvent;
   endMinute: number;
   lane: number;
   laneCount: number;
   startMinute: number;
   visualEndMinute: number;
+};
+
+type DragState = {
+  conflicts: CalendarEvent[];
+  item: TimelineItem;
+  originalScrollOffset: number;
+  saving: boolean;
+  targetStartMinute: number;
 };
 
 function getEventDate(value: CalendarEvent['start']) {
@@ -67,6 +89,7 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
 
     timed.push({
       ...presented,
+      calendarEvent: event,
       endMinute,
       startMinute,
     });
@@ -116,12 +139,22 @@ function formatCurrentTime(value: Date) {
 
 function ScheduleBlock({
   availableHeight,
+  dragItem,
   item,
+  onDragCancel,
+  onDragEnd,
+  onDragStart,
+  onDragUpdate,
   onPress,
   style,
 }: {
   availableHeight?: number;
+  dragItem?: TimelineItem;
   item: ScheduleItem;
+  onDragCancel?: () => void;
+  onDragEnd?: () => void;
+  onDragStart?: (item: TimelineItem) => void;
+  onDragUpdate?: (translationY: number, absoluteY: number) => void;
   onPress: () => void;
   style?: ViewStyle;
 }) {
@@ -138,6 +171,23 @@ function ScheduleBlock({
   const showDetails = density === 'standard' || isLarge;
   const showSymbol = showDetails && layout.width >= 160;
   const showDoodle = isLarge && layout.width >= 250;
+  const dragGesture = useMemo(
+    () =>
+      Gesture.Pan()
+        .enabled(Boolean(dragItem && onDragStart))
+        .activateAfterLongPress(420)
+        .minDistance(1)
+        .onStart(() => {
+          if (dragItem) onDragStart?.(dragItem);
+        })
+        .onUpdate((event) => onDragUpdate?.(event.translationY, event.absoluteY))
+        .onEnd(() => onDragEnd?.())
+        .onFinalize((_event, success) => {
+          if (!success) onDragCancel?.();
+        })
+        .runOnJS(true),
+    [dragItem, onDragCancel, onDragEnd, onDragStart, onDragUpdate],
+  );
 
   const handleLayout = (event: LayoutChangeEvent) => {
     const { height, width } = event.nativeEvent.layout;
@@ -149,9 +199,14 @@ function ScheduleBlock({
   };
 
   return (
-    <Pressable
+    <GestureDetector gesture={dragGesture}>
+      <Pressable
       accessibilityLabel={`${item.title}, ${isAllDay ? 'all day' : `${item.startLabel} to ${item.endLabel}`}`}
-      accessibilityHint="Opens the Google Calendar event details"
+      accessibilityHint={
+        dragItem
+          ? 'Tap for details, or hold and drag vertically to change the time'
+          : 'Opens the Google Calendar event details'
+      }
       accessibilityRole="button"
       hitSlop={isTiny ? 8 : 0}
       onLayout={handleLayout}
@@ -193,12 +248,14 @@ function ScheduleBlock({
         )}
         {showDoodle && <Text style={styles.blockDoodle}>·</Text>}
       </NeoCard>
-    </Pressable>
+      </Pressable>
+    </GestureDetector>
   );
 }
 
 export default function TodayScreen() {
   const router = useRouter();
+  const { preview } = useLocalSearchParams<{ preview?: string }>();
   const {
     connectDeviceCalendar,
     connectGoogleCalendar,
@@ -207,17 +264,33 @@ export default function TodayScreen() {
     isDeviceCalendarAvailable,
     isGoogleCalendarConfigured,
     isLoading,
+    openEvent: openCalendarEvent,
     source,
     syncError,
+    updateEvent,
   } = useCalendar();
   const [connectionError, setConnectionError] = useState<string>();
+  const [dragState, setDragState] = useState<DragState>();
+  const [moveMessage, setMoveMessage] = useState<string>();
+  const [pendingRecurringDrop, setPendingRecurringDrop] = useState<DragState>();
   const [now, setNow] = useState(() => new Date());
+  const autoScrollDirection = useRef<-1 | 0 | 1>(0);
+  const dragStateRef = useRef<DragState | undefined>(undefined);
+  const lastDragTranslation = useRef(0);
+  const scrollOffset = useRef(0);
+  const scrollView = useRef<ScrollView>(null);
+  const timelineViewport = useRef({ bottom: 0, height: 0, top: 0 });
   const currentMinute = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
   const displayedEvents = useMemo(() => deduplicateCalendarEvents(events), [events]);
   const timeline = useMemo(
     () => buildTimeline(displayedEvents, currentMinute),
     [currentMinute, displayedEvents],
   );
+  const pixelsPerMinute = timeline.hourHeight / 60;
+  const timelineHeight = (timeline.endHour - timeline.startHour) * timeline.hourHeight;
+  const currentTimeTop = (currentMinute - timeline.startHour * 60) * pixelsPerMinute;
+  const showCurrentTime =
+    currentMinute >= timeline.startHour * 60 && currentMinute <= timeline.endHour * 60;
   const todayLabel = useMemo(
     () =>
       new Intl.DateTimeFormat(undefined, {
@@ -245,6 +318,174 @@ export default function TodayScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  const setDragSnapshot = useCallback((next?: DragState) => {
+    dragStateRef.current = next;
+    setDragState(next);
+  }, []);
+
+  const cancelDrag = useCallback(() => {
+    autoScrollDirection.current = 0;
+    lastDragTranslation.current = 0;
+    setPendingRecurringDrop(undefined);
+    setDragSnapshot(undefined);
+  }, [setDragSnapshot]);
+
+  const applyDragPosition = useCallback(
+    (translationY: number) => {
+      const current = dragStateRef.current;
+      if (!current || current.saving) return;
+      const durationMinutes = current.item.endMinute - current.item.startMinute;
+      const snapped = snappedStartMinute({
+        durationMinutes,
+        originalStartMinute: current.item.startMinute,
+        pixelsPerMinute,
+        scrollDelta: scrollOffset.current - current.originalScrollOffset,
+        translationY,
+      });
+      const minimum = timeline.startHour * 60;
+      const maximum = Math.max(minimum, timeline.endHour * 60 - durationMinutes);
+      const targetStartMinute = clamp(snapped, minimum, maximum);
+      const conflicts = conflictingEvents(
+        displayedEvents,
+        current.item.id,
+        targetStartMinute,
+        targetStartMinute + durationMinutes,
+      );
+      setDragSnapshot({ ...current, conflicts, targetStartMinute });
+    },
+    [displayedEvents, pixelsPerMinute, setDragSnapshot, timeline.endHour, timeline.startHour],
+  );
+
+  const startDrag = useCallback(
+    (item: TimelineItem) => {
+      setMoveMessage(undefined);
+      if (!item.canModify) {
+        setMoveMessage(`“${item.title}” is on a read-only calendar and cannot be moved here.`);
+        return;
+      }
+      const next: DragState = {
+        conflicts: [],
+        item,
+        originalScrollOffset: scrollOffset.current,
+        saving: false,
+        targetStartMinute: item.startMinute,
+      };
+      lastDragTranslation.current = 0;
+      setDragSnapshot(next);
+    },
+    [setDragSnapshot],
+  );
+
+  const updateDrag = useCallback(
+    (translationY: number, absoluteY: number) => {
+      if (!dragStateRef.current) return;
+      lastDragTranslation.current = translationY;
+      const edge = 62;
+      const viewport = timelineViewport.current;
+      autoScrollDirection.current =
+        absoluteY < viewport.top + edge
+          ? -1
+          : absoluteY > viewport.bottom - edge
+            ? 1
+            : 0;
+      applyDragPosition(translationY);
+    },
+    [applyDragPosition],
+  );
+
+  const commitDrop = useCallback(
+    async (drop: DragState) => {
+      setPendingRecurringDrop(undefined);
+      setDragSnapshot({ ...drop, saving: true });
+      try {
+        const changes = shiftedEventTimes(drop.item.calendarEvent, drop.targetStartMinute);
+        await updateEvent(
+          drop.item.id,
+          changes,
+          drop.item.calendarEvent.calendarId,
+          {
+            instanceStart: drop.item.calendarEvent.start,
+            recurringEventId: drop.item.calendarEvent.recurringEventId,
+            scope: 'single',
+          },
+        );
+        setMoveMessage(
+          `Moved “${drop.item.title}” to ${formatMinuteOfDay(drop.targetStartMinute)}.`,
+        );
+        cancelDrag();
+      } catch (error) {
+        cancelDrag();
+        setMoveMessage(
+          error instanceof Error ? error.message : 'The calendar could not save the new time.',
+        );
+      }
+    },
+    [cancelDrag, setDragSnapshot, updateEvent],
+  );
+
+  const finishDrag = useCallback(() => {
+    autoScrollDirection.current = 0;
+    const current = dragStateRef.current;
+    if (!current || current.saving) return;
+    if (current.targetStartMinute === current.item.startMinute) {
+      cancelDrag();
+      return;
+    }
+    if (current.item.isRecurring) {
+      setPendingRecurringDrop(current);
+      return;
+    }
+    void commitDrop(current);
+  }, [cancelDrag, commitDrop]);
+
+  const handleTimelineScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
+    scrollOffset.current = event.nativeEvent.contentOffset.y;
+  }, []);
+
+  const measureTimelineViewport = useCallback(() => {
+    const measurable = scrollView.current as unknown as
+      | { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => void }
+      | null;
+    measurable?.measureInWindow((_x, y, _width, height) => {
+      timelineViewport.current = { bottom: y + height, height, top: y };
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!dragState) return;
+    const timer = setInterval(() => {
+      if (!autoScrollDirection.current) return;
+      const maximum = Math.max(0, timelineHeight - timelineViewport.current.height);
+      const nextOffset = clamp(
+        scrollOffset.current + autoScrollDirection.current * 14,
+        0,
+        maximum,
+      );
+      if (nextOffset === scrollOffset.current) return;
+      scrollOffset.current = nextOffset;
+      scrollView.current?.scrollTo({ animated: false, y: nextOffset });
+      applyDragPosition(lastDragTranslation.current);
+    }, 50);
+    return () => clearInterval(timer);
+  }, [applyDragPosition, dragState, timelineHeight]);
+
+  useEffect(() => {
+    if (!dragState) return;
+    const cancel = () => {
+      cancelDrag();
+      return true;
+    };
+    const subscription = BackHandler.addEventListener('hardwareBackPress', cancel);
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancel();
+    };
+    if (Platform.OS === 'web') document.addEventListener('keydown', onKeyDown);
+    return () => {
+      subscription.remove();
+      if (Platform.OS === 'web') document.removeEventListener('keydown', onKeyDown);
+    };
+  }, [cancelDrag, dragState]);
+
   const connectCalendar = useCallback(async () => {
     setConnectionError(undefined);
     try {
@@ -260,9 +501,9 @@ export default function TodayScreen() {
     }
   }, [connectDeviceCalendar, connectGoogleCalendar, isDeviceCalendarAvailable]);
 
-  const isCalendarConnected = source === 'device' || source === 'google';
+  const isCalendarConnected = source === 'device' || source === 'google' || preview === '1';
 
-  const openEvent = (id: string) =>
+  const openEventDetails = (id: string) =>
     router.push({
       pathname: '/event/[id]',
       params: { id },
@@ -271,12 +512,6 @@ export default function TodayScreen() {
   const openChatListening = () => {
     router.push({ pathname: '/chat', params: { listening: '1' } });
   };
-
-  const pixelsPerMinute = timeline.hourHeight / 60;
-  const timelineHeight = (timeline.endHour - timeline.startHour) * timeline.hourHeight;
-  const currentTimeTop = (currentMinute - timeline.startHour * 60) * pixelsPerMinute;
-  const showCurrentTime =
-    currentMinute >= timeline.startHour * 60 && currentMinute <= timeline.endHour * 60;
 
   if (!isCalendarConnected) {
     const isConnecting =
@@ -364,10 +599,53 @@ export default function TodayScreen() {
           </View>
 
           {!!syncError && <Text style={styles.syncError}>{syncError}</Text>}
+          {!!moveMessage && (
+            <Pressable accessibilityRole="button" onPress={() => setMoveMessage(undefined)}>
+              <NeoCard
+                backgroundColor={moveMessage.startsWith('Moved') ? colors.lime : colors.pink}
+                style={styles.moveMessage}>
+                <Text style={styles.moveMessageText}>{moveMessage}</Text>
+                <Text style={styles.moveMessageDismiss}>×</Text>
+              </NeoCard>
+            </Pressable>
+          )}
+          {!!dragState && (
+            <NeoCard backgroundColor={colors.yellow} style={styles.dragToolbar}>
+              <View style={styles.dragToolbarCopy}>
+                <Text numberOfLines={1} style={styles.dragToolbarTitle}>
+                  {dragState.saving ? 'saving…' : `moving ${dragState.item.title}`}
+                </Text>
+                <Text style={styles.dragToolbarTime}>
+                  {formatMinuteOfDay(dragState.targetStartMinute)}–
+                  {formatMinuteOfDay(
+                    dragState.targetStartMinute +
+                      dragState.item.endMinute -
+                      dragState.item.startMinute,
+                  )}
+                  {dragState.conflicts.length
+                    ? ` · overlaps ${dragState.conflicts.map((event) => event.summary).join(', ')}`
+                    : ' · no conflicts'}
+                </Text>
+              </View>
+              <Pressable
+                accessibilityLabel="Cancel moving event"
+                disabled={dragState.saving}
+                hitSlop={8}
+                onPress={cancelDrag}
+                style={styles.dragCancelButton}>
+                <Text style={styles.dragCancelText}>cancel</Text>
+              </Pressable>
+            </NeoCard>
+          )}
 
           <ScrollView
             bounces
             contentContainerStyle={styles.timelineScrollContent}
+            onLayout={measureTimelineViewport}
+            onScroll={handleTimelineScroll}
+            ref={scrollView}
+            scrollEnabled={!dragState}
+            scrollEventThrottle={16}
             showsVerticalScrollIndicator={false}
             style={styles.timelineScroll}>
             {timeline.allDay.length > 0 && (
@@ -375,7 +653,11 @@ export default function TodayScreen() {
                 <Text style={styles.allDayLabel}>all day</Text>
                 <View style={styles.allDayBlocks}>
                   {timeline.allDay.map((item) => (
-                    <ScheduleBlock item={item} key={item.id} onPress={() => openEvent(item.id)} />
+                    <ScheduleBlock
+                      item={item}
+                      key={item.id}
+                      onPress={() => openEventDetails(item.id)}
+                    />
                   ))}
                 </View>
               </View>
@@ -416,12 +698,18 @@ export default function TodayScreen() {
                   return (
                     <ScheduleBlock
                       availableHeight={renderedHeight}
+                      dragItem={item}
                       item={item}
                       key={item.id}
-                      onPress={() => openEvent(item.id)}
+                      onDragCancel={cancelDrag}
+                      onDragEnd={finishDrag}
+                      onDragStart={startDrag}
+                      onDragUpdate={updateDrag}
+                      onPress={() => openEventDetails(item.id)}
                       style={{
                         height: renderedHeight,
                         left: `${item.lane * laneWidth}%`,
+                        opacity: dragState?.item.id === item.id ? 0.22 : 1,
                         paddingHorizontal: item.laneCount > 1 ? 3 : 0,
                         position: 'absolute',
                         top: top + 2,
@@ -430,6 +718,53 @@ export default function TodayScreen() {
                     />
                   );
                 })}
+                {!!dragState && (() => {
+                  const item = dragState.item;
+                  const laneWidth = 100 / item.laneCount;
+                  const durationHeight =
+                    (item.visualEndMinute - item.startMinute) * pixelsPerMinute;
+                  const renderedHeight = Math.max(6, durationHeight - EVENT_GAP);
+                  const previewItem = {
+                    ...item,
+                    endLabel: formatMinuteOfDay(
+                      dragState.targetStartMinute + item.endMinute - item.startMinute,
+                    ),
+                    startLabel: formatMinuteOfDay(dragState.targetStartMinute),
+                  };
+                  return (
+                    <View
+                      pointerEvents="none"
+                      style={[
+                        styles.dragPreview,
+                        {
+                          height: renderedHeight,
+                          left: `${item.lane * laneWidth}%`,
+                          paddingHorizontal: item.laneCount > 1 ? 3 : 0,
+                          top:
+                            (dragState.targetStartMinute - timeline.startHour * 60) *
+                              pixelsPerMinute + 2,
+                          width: `${laneWidth}%`,
+                        },
+                      ]}>
+                      <ScheduleBlock
+                        availableHeight={renderedHeight}
+                        item={previewItem}
+                        onPress={() => undefined}
+                        style={{ height: renderedHeight }}
+                      />
+                      <Text
+                        numberOfLines={1}
+                        style={[
+                          styles.dragPreviewBadge,
+                          dragState.conflicts.length > 0 && styles.dragPreviewConflict,
+                        ]}>
+                        {dragState.conflicts.length
+                          ? `${dragState.conflicts.length} conflict${dragState.conflicts.length === 1 ? '' : 's'}`
+                          : 'drop here'}
+                      </Text>
+                    </View>
+                  );
+                })()}
               </View>
             </View>
           </ScrollView>
@@ -439,6 +774,56 @@ export default function TodayScreen() {
           </View>
         </View>
       </SafeAreaView>
+      <Modal
+        animationType="fade"
+        onRequestClose={cancelDrag}
+        transparent
+        visible={Boolean(pendingRecurringDrop)}>
+        <View style={styles.modalBackdrop}>
+          <NeoCard backgroundColor={colors.paper} style={styles.recurringCard}>
+            <Text style={styles.recurringTitle}>recurring event</Text>
+            <Text style={styles.recurringBody}>
+              Move only this occurrence, or open Calendar to choose how the whole series changes.
+            </Text>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                if (pendingRecurringDrop) void commitDrop(pendingRecurringDrop);
+              }}
+              style={({ pressed }) => [
+                styles.recurringPrimaryButton,
+                pressed && styles.blockPressed,
+              ]}>
+              <Text style={styles.recurringPrimaryText}>move this occurrence</Text>
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              onPress={() => {
+                const drop = pendingRecurringDrop;
+                if (!drop) return;
+                void openCalendarEvent(drop.item.id)
+                  .then((opened) => {
+                    if (!opened) setMoveMessage('Calendar could not open this recurring event.');
+                  })
+                  .catch((error: unknown) => {
+                    setMoveMessage(
+                      error instanceof Error ? error.message : 'Calendar could not open the series.',
+                    );
+                  })
+                  .finally(cancelDrag);
+              }}
+              style={({ pressed }) => [
+                styles.recurringSecondaryButton,
+                pressed && styles.blockPressed,
+              ]}>
+              <Text style={styles.recurringSecondaryText}>edit the series in Calendar</Text>
+            </Pressable>
+            <Pressable accessibilityRole="button" onPress={cancelDrag} style={styles.modalCancel}>
+              <Text style={styles.modalCancelText}>keep original time</Text>
+            </Pressable>
+          </NeoCard>
+        </View>
+      </Modal>
     </View>
   );
 }
@@ -623,6 +1008,64 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
     textAlign: 'center',
   },
+  moveMessage: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    marginBottom: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  moveMessageText: {
+    color: colors.ink,
+    flex: 1,
+    fontFamily: fonts.handBold,
+    fontSize: 15,
+  },
+  moveMessageDismiss: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 22,
+    marginLeft: spacing.sm,
+  },
+  dragToolbar: {
+    alignItems: 'center',
+    bottom: 96,
+    flexDirection: 'row',
+    left: spacing.sm,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    position: 'absolute',
+    right: spacing.sm,
+    zIndex: 50,
+  },
+  dragToolbarCopy: {
+    flex: 1,
+    minWidth: 0,
+  },
+  dragToolbarTitle: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 17,
+  },
+  dragToolbarTime: {
+    color: colors.ink,
+    fontFamily: fonts.hand,
+    fontSize: 14,
+    marginTop: 1,
+  },
+  dragCancelButton: {
+    borderColor: colors.ink,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    marginLeft: spacing.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+  },
+  dragCancelText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 14,
+  },
   timeline: {
     position: 'relative',
   },
@@ -718,6 +1161,28 @@ const styles = StyleSheet.create({
     top: 0,
     zIndex: 2,
   },
+  dragPreview: {
+    position: 'absolute',
+    zIndex: 20,
+  },
+  dragPreviewBadge: {
+    alignSelf: 'flex-end',
+    backgroundColor: colors.lime,
+    borderColor: colors.ink,
+    borderRadius: 7,
+    borderWidth: 1.5,
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 12,
+    marginRight: 7,
+    marginTop: -8,
+    overflow: 'hidden',
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+  },
+  dragPreviewConflict: {
+    backgroundColor: colors.pink,
+  },
   blockPosition: {
     height: 58,
   },
@@ -805,5 +1270,71 @@ const styles = StyleSheet.create({
     backgroundColor: colors.paper,
     flexShrink: 0,
     paddingTop: spacing.md,
+  },
+  modalBackdrop: {
+    alignItems: 'center',
+    backgroundColor: 'rgba(18, 18, 18, 0.45)',
+    flex: 1,
+    justifyContent: 'center',
+    padding: spacing.xl,
+  },
+  recurringCard: {
+    maxWidth: 420,
+    padding: spacing.xl,
+    width: '100%',
+  },
+  recurringTitle: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 27,
+  },
+  recurringBody: {
+    color: colors.ink,
+    fontFamily: fonts.hand,
+    fontSize: 18,
+    lineHeight: 25,
+    marginBottom: spacing.lg,
+    marginTop: spacing.sm,
+  },
+  recurringPrimaryButton: {
+    alignItems: 'center',
+    backgroundColor: colors.yellow,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    minHeight: 50,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
+  recurringPrimaryText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 17,
+  },
+  recurringSecondaryButton: {
+    alignItems: 'center',
+    backgroundColor: colors.aqua,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    justifyContent: 'center',
+    marginTop: spacing.sm,
+    minHeight: 50,
+    paddingHorizontal: spacing.md,
+  },
+  recurringSecondaryText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 17,
+  },
+  modalCancel: {
+    alignItems: 'center',
+    marginTop: spacing.md,
+    padding: spacing.sm,
+  },
+  modalCancelText: {
+    color: colors.muted,
+    fontFamily: fonts.handBold,
+    fontSize: 15,
   },
 });

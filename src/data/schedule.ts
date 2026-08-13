@@ -10,4 +10,6 @@ export type ScheduleItem = {
   calendarName: string;
   reminderLabel?: string;
   htmlLink?: string;
+  canModify: boolean;
+  isRecurring: boolean;
 };

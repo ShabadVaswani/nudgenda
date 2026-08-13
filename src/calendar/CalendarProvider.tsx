@@ -15,6 +15,7 @@ import { googleCalendar } from '@/calendar/googleCalendar';
 import type {
   CalendarEvent,
   CalendarEventDraft,
+  CalendarEventUpdateOptions,
   CalendarRepository,
 } from '@/calendar/types';
 
@@ -46,6 +47,7 @@ type CalendarContextValue = {
     eventId: string,
     changes: Partial<CalendarEventDraft>,
     calendarId?: string,
+    options?: CalendarEventUpdateOptions,
   ) => Promise<CalendarEvent>;
   useDemoCalendar: () => void;
 };
@@ -255,8 +257,8 @@ export function CalendarProvider({ children }: PropsWithChildren) {
       },
       source,
       syncError,
-      updateEvent: async (eventId, changes, calendarId) => {
-        const updated = await repository.update(eventId, changes, calendarId);
+      updateEvent: async (eventId, changes, calendarId, options) => {
+        const updated = await repository.update(eventId, changes, calendarId, options);
         await refresh();
         return updated;
       },

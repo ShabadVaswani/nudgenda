@@ -7,6 +7,7 @@ import type {
   CalendarDateTime,
   CalendarEvent,
   CalendarEventDraft,
+  CalendarEventUpdateOptions,
   CalendarReminder,
   CalendarRepository,
 } from '@/calendar/types';
@@ -68,6 +69,8 @@ type GoogleEventResource = {
     overrides?: { method: string; minutes: number }[];
     useDefault?: boolean;
   };
+  recurrence?: string[];
+  recurringEventId?: string;
   start: CalendarDateTime;
   status?: string;
   summary?: string;
@@ -242,6 +245,7 @@ function mapEvent(
     .filter((reminder): reminder is CalendarReminder => !!reminder);
 
   return {
+    canModify: isWritable(calendar),
     calendarColor: calendar.backgroundColor,
     calendarId: calendar.id,
     calendarName: calendar.summary,
@@ -250,6 +254,7 @@ function mapEvent(
     end: event.end,
     htmlLink: event.htmlLink,
     id: localEventId(calendar.id, event.id),
+    isRecurring: Boolean(event.recurringEventId || event.recurrence?.length),
     location: event.location,
     reminders: {
       overrides,
@@ -257,6 +262,9 @@ function mapEvent(
     },
     start: event.start,
     summary: event.summary ?? '(untitled event)',
+    recurringEventId: event.recurringEventId
+      ? localEventId(calendar.id, event.recurringEventId)
+      : undefined,
   };
 }
 
@@ -369,8 +377,14 @@ class GoogleCalendarRepository implements CalendarRepository {
     eventId: string,
     changes: Partial<CalendarEventDraft>,
     calendarId?: string,
+    options?: CalendarEventUpdateOptions,
   ) {
-    const target = this.eventTarget(eventId, calendarId);
+    const target = this.eventTarget(
+      options?.scope === 'series' && options.recurringEventId
+        ? options.recurringEventId
+        : eventId,
+      calendarId,
+    );
     const calendar = this.calendars.find((item) => item.id === target.calendarId);
     if (!calendar) throw new Error('The event calendar is no longer available');
     const updated = await requestGoogle<GoogleEventResource>(

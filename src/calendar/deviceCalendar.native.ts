@@ -8,6 +8,7 @@ import { openDeviceCalendarEvent } from '@/calendar/openDeviceEvent';
 import type {
   CalendarEvent,
   CalendarEventDraft,
+  CalendarEventUpdateOptions,
   CalendarReminder,
   CalendarRepository,
 } from '@/calendar/types';
@@ -70,6 +71,7 @@ function toEvent(
   const endDate = new Date(event.endDate);
 
   return {
+    canModify: Boolean(calendar?.allowsModifications),
     calendarColor: calendar?.color,
     calendarId: event.calendarId,
     calendarName: calendar?.title,
@@ -78,6 +80,7 @@ function toEvent(
       ? { date: endDate.toISOString().slice(0, 10) }
       : { dateTime: endDate.toISOString(), timeZone: event.endTimeZone ?? event.timeZone },
     id: event.id,
+    isRecurring: Boolean(event.recurrenceRule || event.originalId || event.instanceId),
     location: event.location ?? undefined,
     reminders: reminders.length
       ? { overrides: reminders, useDefault: false }
@@ -86,6 +89,7 @@ function toEvent(
       ? { date: startDate.toISOString().slice(0, 10) }
       : { dateTime: startDate.toISOString(), timeZone: event.timeZone },
     summary: event.title,
+    recurringEventId: event.originalId ?? (event.recurrenceRule ? event.id : undefined),
   };
 }
 
@@ -150,10 +154,24 @@ class AndroidCalendarRepository implements CalendarRepository {
     return toEvent(created, this.calendarMap());
   }
 
-  async update(eventId: string, changes: Partial<CalendarEventDraft>) {
-    const event = await Calendar.ExpoCalendarEvent.get(eventId);
-    await event.update(toDeviceDetails(changes));
-    return toEvent(await Calendar.ExpoCalendarEvent.get(eventId), this.calendarMap());
+  async update(
+    eventId: string,
+    changes: Partial<CalendarEventDraft>,
+    _calendarId?: string,
+    options?: CalendarEventUpdateOptions,
+  ) {
+    const baseId =
+      options?.scope === 'single' && options.recurringEventId
+        ? options.recurringEventId
+        : eventId;
+    const event = await Calendar.ExpoCalendarEvent.get(baseId);
+    const instanceStart = options?.instanceStart ? dateValue(options.instanceStart) : undefined;
+    const target =
+      options?.scope === 'single' && instanceStart
+        ? event.getOccurrenceSync({ instanceStartDate: instanceStart })
+        : event;
+    await target.update(toDeviceDetails(changes));
+    return toEvent(target, this.calendarMap());
   }
 
   async remove(eventId: string) {

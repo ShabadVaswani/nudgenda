@@ -1,9 +1,11 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCalendar } from '@/calendar/CalendarProvider';
 import { presentCalendarEvent } from '@/calendar/presentation';
+import { clamp, shiftedEventTimes } from '@/calendar/reschedule';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { colors, fonts, spacing } from '@/constants/design';
@@ -11,7 +13,8 @@ import { colors, fonts, spacing } from '@/constants/design';
 export default function EventDetailScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ id?: string }>();
-  const { getEvent, isLoading, openEvent, source } = useCalendar();
+  const { getEvent, isLoading, openEvent, source, updateEvent } = useCalendar();
+  const [isMoving, setIsMoving] = useState(false);
   const calendarEvent = getEvent(params.id);
 
   if (!calendarEvent) {
@@ -44,6 +47,54 @@ export default function EventDetailScreen() {
         error instanceof Error ? error.message : 'The system calendar could not open this event.',
       );
     }
+  };
+
+  const moveBy = async (deltaMinutes: number) => {
+    if (!calendarEvent.canModify || !calendarEvent.start.dateTime || !calendarEvent.end.dateTime) {
+      Alert.alert('Cannot move this event', 'This calendar is read-only or the event has no editable time.');
+      return;
+    }
+    const start = new Date(calendarEvent.start.dateTime);
+    const end = new Date(calendarEvent.end.dateTime);
+    const durationMinutes = Math.max(1, (end.getTime() - start.getTime()) / 60_000);
+    const startMinute = start.getHours() * 60 + start.getMinutes();
+    const targetStart = clamp(startMinute + deltaMinutes, 0, 1440 - durationMinutes);
+
+    const performMove = async () => {
+      setIsMoving(true);
+      try {
+        await updateEvent(
+          calendarEvent.id,
+          shiftedEventTimes(calendarEvent, targetStart),
+          calendarEvent.calendarId,
+          {
+            instanceStart: calendarEvent.start,
+            recurringEventId: calendarEvent.recurringEventId,
+            scope: 'single',
+          },
+        );
+      } catch (error) {
+        Alert.alert(
+          'Could not move event',
+          error instanceof Error ? error.message : 'The calendar could not save the new time.',
+        );
+      } finally {
+        setIsMoving(false);
+      }
+    };
+
+    if (calendarEvent.isRecurring) {
+      Alert.alert(
+        'Recurring event',
+        'Move only this occurrence? Use the Calendar button below to edit the entire series.',
+        [
+          { style: 'cancel', text: 'Cancel' },
+          { onPress: () => void performMove(), text: 'This occurrence' },
+        ],
+      );
+      return;
+    }
+    await performMove();
   };
 
   return (
@@ -98,6 +149,39 @@ export default function EventDetailScreen() {
               <Text style={styles.chevron}>{'\u203A'}</Text>
             </NeoCard>
           )}
+
+          <View style={styles.moveSection}>
+            <Text style={styles.moveLabel}>adjust start time</Text>
+            <View style={styles.moveButtons}>
+              <Pressable
+                accessibilityLabel="Move event 15 minutes earlier"
+                accessibilityRole="button"
+                disabled={isMoving || !calendarEvent.canModify}
+                onPress={() => void moveBy(-15)}
+                style={({ pressed }) => [
+                  styles.moveButton,
+                  (isMoving || !calendarEvent.canModify) && styles.moveButtonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}>
+                <Text style={styles.moveButtonText}>← 15 min</Text>
+              </Pressable>
+              <Pressable
+                accessibilityLabel="Move event 15 minutes later"
+                accessibilityRole="button"
+                disabled={isMoving || !calendarEvent.canModify}
+                onPress={() => void moveBy(15)}
+                style={({ pressed }) => [
+                  styles.moveButton,
+                  (isMoving || !calendarEvent.canModify) && styles.moveButtonDisabled,
+                  pressed && styles.buttonPressed,
+                ]}>
+                <Text style={styles.moveButtonText}>15 min →</Text>
+              </Pressable>
+            </View>
+            {!calendarEvent.canModify && (
+              <Text style={styles.readOnlyText}>This calendar is read-only.</Text>
+            )}
+          </View>
 
           <Pressable
             accessibilityRole="button"
@@ -258,5 +342,43 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontFamily: fonts.handBold,
     fontSize: 18,
+  },
+  moveSection: {
+    marginTop: spacing.sm,
+  },
+  moveLabel: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 16,
+    marginBottom: spacing.sm,
+  },
+  moveButtons: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  moveButton: {
+    alignItems: 'center',
+    backgroundColor: colors.lime,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    flex: 1,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: spacing.md,
+  },
+  moveButtonDisabled: {
+    opacity: 0.4,
+  },
+  moveButtonText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 17,
+  },
+  readOnlyText: {
+    color: colors.muted,
+    fontFamily: fonts.hand,
+    fontSize: 15,
+    marginTop: spacing.sm,
   },
 });

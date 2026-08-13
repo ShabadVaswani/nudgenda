@@ -13,6 +13,7 @@ function atHour(day: Date, hour: number, minute = 0) {
 function createDemoEvents(day: Date): CalendarEvent[] {
   return [
     {
+      canModify: true,
       id: 'morning-routine',
       calendarId: 'primary',
       colorId: '7',
@@ -24,6 +25,7 @@ function createDemoEvents(day: Date): CalendarEvent[] {
       summary: 'morning routine',
     },
     {
+      canModify: true,
       id: 'focus-work',
       calendarId: 'primary',
       colorId: '2',
@@ -32,6 +34,7 @@ function createDemoEvents(day: Date): CalendarEvent[] {
       summary: 'focus work',
     },
     {
+      canModify: true,
       id: 'lunch',
       calendarId: 'primary',
       colorId: '4',
@@ -40,6 +43,7 @@ function createDemoEvents(day: Date): CalendarEvent[] {
       summary: 'lunch',
     },
     {
+      canModify: true,
       id: 'project-work',
       calendarId: 'primary',
       colorId: '5',
@@ -48,6 +52,7 @@ function createDemoEvents(day: Date): CalendarEvent[] {
       summary: 'project work',
     },
     {
+      canModify: true,
       id: 'admin',
       calendarId: 'primary',
       colorId: '9',

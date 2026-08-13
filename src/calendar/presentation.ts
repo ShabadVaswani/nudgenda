@@ -26,6 +26,7 @@ export function presentCalendarEvent(event: CalendarEvent): ScheduleItem {
   const description = normalizeCalendarDescription(event.description);
 
   return {
+    canModify: event.canModify !== false,
     calendarName:
       event.calendarName ?? (event.calendarId === 'primary' ? 'Personal' : event.calendarId),
     color: event.calendarColor ?? calendarColors[event.colorId ?? ''] ?? colors.aqua,
@@ -40,6 +41,7 @@ export function presentCalendarEvent(event: CalendarEvent): ScheduleItem {
     endLabel: formatTime(end),
     htmlLink: event.htmlLink,
     id: event.id,
+    isRecurring: Boolean(event.isRecurring),
     reminderLabel: reminder ? `${reminder.minutes} min before` : undefined,
     startLabel: formatTime(start),
     symbol: symbols[event.summary.toLowerCase()] ?? '·',

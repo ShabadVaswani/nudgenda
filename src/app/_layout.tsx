@@ -6,6 +6,7 @@ import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect } from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AgentSettingsProvider } from '@/agent/AgentSettingsProvider';
 import { CalendarProvider } from '@/calendar/CalendarProvider';
@@ -31,20 +32,22 @@ export default function RootLayout() {
   }
 
   return (
-    <AgentSettingsProvider>
-      <ImportedContextProvider>
-        <CalendarProvider>
-          <StatusBar style="dark" />
-          <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-            <Stack.Screen name="index" />
-            <Stack.Screen name="chat" options={{ animation: 'slide_from_bottom' }} />
-            <Stack.Screen name="connect/google" />
-            <Stack.Screen name="event/[id]" />
-            <Stack.Screen name="settings/calendar" />
-            <Stack.Screen name="settings/import-context" />
-          </Stack>
-        </CalendarProvider>
-      </ImportedContextProvider>
-    </AgentSettingsProvider>
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <AgentSettingsProvider>
+        <ImportedContextProvider>
+          <CalendarProvider>
+            <StatusBar style="dark" />
+            <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+              <Stack.Screen name="index" />
+              <Stack.Screen name="chat" options={{ animation: 'slide_from_bottom' }} />
+              <Stack.Screen name="connect/google" />
+              <Stack.Screen name="event/[id]" />
+              <Stack.Screen name="settings/calendar" />
+              <Stack.Screen name="settings/import-context" />
+            </Stack>
+          </CalendarProvider>
+        </ImportedContextProvider>
+      </AgentSettingsProvider>
+    </GestureHandlerRootView>
   );
 }

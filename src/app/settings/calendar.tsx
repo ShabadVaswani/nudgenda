@@ -19,6 +19,7 @@ import { useCalendar } from '@/calendar/CalendarProvider';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { colors, fonts, spacing } from '@/constants/design';
+import { useImportedContext } from '@/context/ImportedContextProvider';
 
 const FREE_MODEL_OPTIONS = [
   { id: 'openrouter/free', label: 'Auto', recommended: true },
@@ -31,6 +32,7 @@ const FREE_MODEL_OPTIONS = [
 export default function SettingsScreen() {
   const router = useRouter();
   const { apiKey, clearApiKey, isConfigured, model, save } = useAgentSettings();
+  const { context: importedContext } = useImportedContext();
   const {
     calendarAccountLabel,
     connectDeviceCalendar,
@@ -189,6 +191,25 @@ export default function SettingsScreen() {
                 </Pressable>
               )}
             </View>
+          </NeoCard>
+
+          <NeoCard backgroundColor={colors.lime} style={styles.card}>
+            <Text style={styles.eyebrow}>IMPORTED CONTEXT</Text>
+            <Text style={styles.cardTitle}>
+              {importedContext ? importedContext.sourceName : 'continue from earlier context'}
+            </Text>
+            <Text style={styles.body}>
+              {importedContext
+                ? importedContext.structured.summary
+                : 'Paste text or choose a TXT, Markdown, JSON, or text-based PDF file. You will preview it before it affects the agent.'}
+            </Text>
+            <Pressable
+              onPress={() => router.push('/settings/import-context')}
+              style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
+              <Text style={styles.primaryButtonText}>
+                {importedContext ? 'inspect or replace context' : 'import context'}
+              </Text>
+            </Pressable>
           </NeoCard>
 
           <Text style={styles.footnote}>

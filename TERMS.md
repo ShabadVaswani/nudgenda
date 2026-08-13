@@ -54,6 +54,7 @@ AI chat is optional and requires the user to provide an OpenRouter API key and s
 - a limited recent conversation history;
 - the current date, time, and timezone;
 - relevant calendar-event titles, times, identifiers, descriptions, and calendar labels; and
+- any extracted context that the user explicitly previewed and applied from an imported text, Markdown, JSON, or text-based PDF file; and
 - instructions needed to return structured calendar actions.
 
 Nudgenda's developer does not receive this request through a Nudgenda-operated server. OpenRouter and the selected model provider may process or retain submitted information according to their own terms, privacy policies, account settings, and model-routing configuration. Users should not submit sensitive information unless they understand and accept those third-party practices.
@@ -66,12 +67,15 @@ Depending on platform and enabled features, Nudgenda may store the following loc
 
 - the user's OpenRouter API key;
 - the selected OpenRouter model identifier;
+- extracted text and structured summaries from context imports that the user explicitly applies;
 - application preferences; and
 - temporary interface or conversation state.
 
 On Android, supported secrets are stored using secure device storage. On the web, local settings may be stored in browser local storage. Removing the application, clearing its storage, or clearing browser site data may delete these settings.
 
 Nudgenda does not intentionally collect analytics, advertising identifiers, precise location, contacts, Gmail messages, payment-card information, or raw microphone recordings in the current version.
+
+Context files are selected through the operating system picker and processed locally. Nudgenda limits accepted file and extracted-text size, stores the extracted context rather than the original file, and attempts to discard its temporary picker copy after extraction. Image-only PDFs are not processed because the current version does not include OCR. Users can inspect, replace, or remove active imported context from settings.
 
 ## 7. Third-party services
 
@@ -124,4 +128,3 @@ Questions, privacy requests, or security reports may be sent to:
 **[Developer legal name]**  
 **[Contact email]**  
 **[Optional mailing address or repository security-reporting link]**
-

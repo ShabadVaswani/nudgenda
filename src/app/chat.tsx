@@ -26,6 +26,7 @@ import { MicButton } from '@/components/MicButton';
 import { NeoCard } from '@/components/NeoCard';
 import { VoiceWave } from '@/components/VoiceWave';
 import { colors, fonts, spacing } from '@/constants/design';
+import { useImportedContext } from '@/context/ImportedContextProvider';
 import { useVoiceInput } from '@/voice/useVoiceInput';
 
 type ChatMessage = AgentConversationMessage & {
@@ -53,6 +54,7 @@ export default function ChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ listening?: string }>();
   const { apiKey, isConfigured, model } = useAgentSettings();
+  const { context: importedContext } = useImportedContext();
   const { createEvent, events, removeEvent, updateEvent } = useCalendar();
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState('');
@@ -191,6 +193,7 @@ export default function ChatScreen() {
       const turn = await requestCalendarAgentTurn({
         apiKey,
         events,
+        importedContext,
         messages: nextMessages.map(({ content: text, role }) => ({ content: text, role })),
         model,
       });

@@ -9,6 +9,7 @@ import { useEffect } from 'react';
 
 import { AgentSettingsProvider } from '@/agent/AgentSettingsProvider';
 import { CalendarProvider } from '@/calendar/CalendarProvider';
+import { ImportedContextProvider } from '@/context/ImportedContextProvider';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -31,16 +32,19 @@ export default function RootLayout() {
 
   return (
     <AgentSettingsProvider>
-      <CalendarProvider>
-        <StatusBar style="dark" />
-        <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
-          <Stack.Screen name="index" />
-          <Stack.Screen name="chat" options={{ animation: 'slide_from_bottom' }} />
-          <Stack.Screen name="connect/google" />
-          <Stack.Screen name="event/[id]" />
-          <Stack.Screen name="settings/calendar" />
-        </Stack>
-      </CalendarProvider>
+      <ImportedContextProvider>
+        <CalendarProvider>
+          <StatusBar style="dark" />
+          <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
+            <Stack.Screen name="index" />
+            <Stack.Screen name="chat" options={{ animation: 'slide_from_bottom' }} />
+            <Stack.Screen name="connect/google" />
+            <Stack.Screen name="event/[id]" />
+            <Stack.Screen name="settings/calendar" />
+            <Stack.Screen name="settings/import-context" />
+          </Stack>
+        </CalendarProvider>
+      </ImportedContextProvider>
     </AgentSettingsProvider>
   );
 }

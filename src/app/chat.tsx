@@ -2,6 +2,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -91,6 +92,14 @@ export default function ChatScreen() {
   useEffect(() => {
     requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
   }, [isSending, messages]);
+
+  useEffect(() => {
+    const keyboardEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const subscription = Keyboard.addListener(keyboardEvent, () => {
+      requestAnimationFrame(() => scrollRef.current?.scrollToEnd({ animated: true }));
+    });
+    return () => subscription.remove();
+  }, []);
 
   useEffect(() => {
     if (!transcript) return;
@@ -201,7 +210,7 @@ export default function ChatScreen() {
 
   return (
     <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.screen}>
       <Animated.View
         style={[styles.animatedContent, { transform: [{ translateY: entranceOffset }] }]}>
@@ -225,9 +234,11 @@ export default function ChatScreen() {
 
         <ScrollView
           contentContainerStyle={styles.messages}
+          keyboardDismissMode={Platform.OS === 'ios' ? 'interactive' : 'on-drag'}
           keyboardShouldPersistTaps="handled"
           ref={scrollRef}
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+          style={styles.messageList}>
           {!isConfigured && (
             <Pressable onPress={() => router.push('/settings/calendar')}>
               <NeoCard backgroundColor={colors.yellow} style={styles.setupCard}>
@@ -340,6 +351,9 @@ const styles = StyleSheet.create({
     gap: spacing.lg,
     justifyContent: 'flex-end',
     padding: spacing.lg,
+  },
+  messageList: {
+    flex: 1,
   },
   setupCard: {
     alignSelf: 'center',

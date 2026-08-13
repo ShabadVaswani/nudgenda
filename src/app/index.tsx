@@ -13,6 +13,7 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCalendar } from '@/calendar/CalendarProvider';
+import { deduplicateCalendarEvents } from '@/calendar/deduplicate';
 import { presentCalendarEvent } from '@/calendar/presentation';
 import type { CalendarEvent } from '@/calendar/types';
 import { MicButton } from '@/components/MicButton';
@@ -232,7 +233,11 @@ export default function TodayScreen() {
   const [connectionError, setConnectionError] = useState<string>();
   const [now, setNow] = useState(() => new Date());
   const currentMinute = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-  const timeline = useMemo(() => buildTimeline(events, currentMinute), [currentMinute, events]);
+  const displayedEvents = useMemo(() => deduplicateCalendarEvents(events), [events]);
+  const timeline = useMemo(
+    () => buildTimeline(displayedEvents, currentMinute),
+    [currentMinute, displayedEvents],
+  );
   const todayLabel = useMemo(
     () =>
       new Intl.DateTimeFormat(undefined, {
@@ -365,7 +370,7 @@ export default function TodayScreen() {
               <View style={styles.headerActions}>
                 <NeoCard style={styles.blockCount}>
                   <Text style={styles.blockCountText}>
-                    {isLoading ? 'syncing…' : `${events.length} blocks · ${source}`}
+                    {isLoading ? 'syncing…' : `${displayedEvents.length} blocks · ${source}`}
                   </Text>
                 </NeoCard>
                 <Pressable

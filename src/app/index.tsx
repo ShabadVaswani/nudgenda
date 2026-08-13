@@ -15,6 +15,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { useCalendar } from '@/calendar/CalendarProvider';
 import { deduplicateCalendarEvents } from '@/calendar/deduplicate';
 import { presentCalendarEvent } from '@/calendar/presentation';
+import {
+  assignTimelineLanes,
+  getAdaptiveHourHeight,
+} from '@/calendar/timelineScale';
 import type { CalendarEvent } from '@/calendar/types';
 import { MicButton } from '@/components/MicButton';
 import { NeoCard } from '@/components/NeoCard';
@@ -24,17 +28,14 @@ import { colors, fonts, spacing } from '@/constants/design';
 import type { ScheduleItem } from '@/data/schedule';
 import { isUpwardChatIntent, shouldOpenChatFromSwipe } from '@/navigation/homeChatGesture';
 
-const HOUR_HEIGHT = 92;
 const EVENT_GAP = 5;
-const TITLE_HEIGHT_THRESHOLD = 24;
-const MIN_RENDERABLE_EVENT_MINUTES =
-  ((TITLE_HEIGHT_THRESHOLD + EVENT_GAP) / HOUR_HEIGHT) * 60;
 
 type TimelineItem = ScheduleItem & {
   endMinute: number;
   lane: number;
   laneCount: number;
   startMinute: number;
+  visualEndMinute: number;
 };
 
 function getEventDate(value: CalendarEvent['start']) {
@@ -47,7 +48,7 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
   dayStart.setHours(0, 0, 0, 0);
 
   const allDay: ScheduleItem[] = [];
-  const timed: TimelineItem[] = [];
+  const timed: Omit<TimelineItem, 'lane' | 'laneCount' | 'visualEndMinute'>[] = [];
 
   events.forEach((event) => {
     const presented = presentCalendarEvent(event);
@@ -63,45 +64,23 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
     const startMinute = Math.max(0, Math.min(1440, (start.getTime() - dayStart.getTime()) / 60000));
     const rawEndMinute = Math.max(0, Math.min(1440, (end.getTime() - dayStart.getTime()) / 60000));
     const endMinute = Math.max(startMinute + 1, rawEndMinute);
-    if (endMinute - startMinute < MIN_RENDERABLE_EVENT_MINUTES) return;
 
     timed.push({
       ...presented,
       endMinute,
-      lane: 0,
-      laneCount: 1,
       startMinute,
     });
   });
 
   timed.sort((a, b) => a.startMinute - b.startMinute || a.endMinute - b.endMinute);
+  const laidOut = assignTimelineLanes(timed);
+  const hourHeight = getAdaptiveHourHeight(
+    laidOut.map((item) => item.endMinute - item.startMinute),
+  );
 
-  // Split overlapping events into clusters, then give each event a side-by-side lane.
-  for (let clusterStart = 0; clusterStart < timed.length; ) {
-    let clusterEnd = clusterStart + 1;
-    let latestEnd = timed[clusterStart].endMinute;
-    while (clusterEnd < timed.length && timed[clusterEnd].startMinute < latestEnd - 0.01) {
-      latestEnd = Math.max(latestEnd, timed[clusterEnd].endMinute);
-      clusterEnd += 1;
-    }
-
-    const laneEnds: number[] = [];
-    for (let index = clusterStart; index < clusterEnd; index += 1) {
-      const item = timed[index];
-      let lane = laneEnds.findIndex((laneEnd) => laneEnd <= item.startMinute + 0.01);
-      if (lane === -1) lane = laneEnds.length;
-      laneEnds[lane] = item.endMinute;
-      item.lane = lane;
-    }
-    for (let index = clusterStart; index < clusterEnd; index += 1) {
-      timed[index].laneCount = laneEnds.length;
-    }
-    clusterStart = clusterEnd;
-  }
-
-  const earliestMinute = Math.min(timed[0]?.startMinute ?? currentMinute, currentMinute);
-  const latestMinute = timed.reduce(
-    (latest, item) => Math.max(latest, item.endMinute),
+  const earliestMinute = Math.min(laidOut[0]?.startMinute ?? currentMinute, currentMinute);
+  const latestMinute = laidOut.reduce(
+    (latest, item) => Math.max(latest, item.visualEndMinute),
     currentMinute,
   );
   let startHour = Math.max(0, Math.floor(earliestMinute / 60) - 1);
@@ -114,8 +93,9 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
   return {
     allDay,
     endHour,
+    hourHeight,
     hours: Array.from({ length: endHour - startHour + 1 }, (_, index) => startHour + index),
-    items: timed,
+    items: laidOut,
     startHour,
   };
 }
@@ -292,8 +272,8 @@ export default function TodayScreen() {
     router.push({ pathname: '/chat', params: { listening: '1' } });
   };
 
-  const pixelsPerMinute = HOUR_HEIGHT / 60;
-  const timelineHeight = (timeline.endHour - timeline.startHour) * HOUR_HEIGHT;
+  const pixelsPerMinute = timeline.hourHeight / 60;
+  const timelineHeight = (timeline.endHour - timeline.startHour) * timeline.hourHeight;
   const currentTimeTop = (currentMinute - timeline.startHour * 60) * pixelsPerMinute;
   const showCurrentTime =
     currentMinute >= timeline.startHour * 60 && currentMinute <= timeline.endHour * 60;
@@ -406,7 +386,10 @@ export default function TodayScreen() {
                 <View
                   key={hour}
                   pointerEvents="none"
-                  style={[styles.hourRow, { top: (hour - timeline.startHour) * HOUR_HEIGHT }]}>
+                  style={[
+                    styles.hourRow,
+                    { top: (hour - timeline.startHour) * timeline.hourHeight },
+                  ]}>
                   <Text style={styles.timeLabel}>{formatHour(hour)}</Text>
                   <View style={styles.hourRule} />
                 </View>
@@ -426,7 +409,8 @@ export default function TodayScreen() {
                 {timeline.items.map((item) => {
                   const laneWidth = 100 / item.laneCount;
                   const top = (item.startMinute - timeline.startHour * 60) * pixelsPerMinute;
-                  const durationHeight = (item.endMinute - item.startMinute) * pixelsPerMinute;
+                  const durationHeight =
+                    (item.visualEndMinute - item.startMinute) * pixelsPerMinute;
                   const renderedHeight = Math.max(6, durationHeight - EVENT_GAP);
 
                   return (

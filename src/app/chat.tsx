@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Animated,
   Keyboard,
@@ -26,13 +26,12 @@ import { MicButton } from '@/components/MicButton';
 import { NeoCard } from '@/components/NeoCard';
 import { VoiceWave } from '@/components/VoiceWave';
 import { colors, fonts, spacing } from '@/constants/design';
-import { useImportedContext } from '@/context/ImportedContextProvider';
+import { useMemory } from '@/memory/MemoryProvider';
+import { memoryForAgentPrompt } from '@/memory/maintenance';
+import type { StoredConversationMessage } from '@/memory/types';
 import { useVoiceInput } from '@/voice/useVoiceInput';
 
-type ChatMessage = AgentConversationMessage & {
-  id: string;
-  time: string;
-};
+type ChatMessage = AgentConversationMessage & { id: string; time: string };
 
 function timeLabel() {
   return new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
@@ -54,19 +53,15 @@ export default function ChatScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ listening?: string }>();
   const { apiKey, isConfigured, model } = useAgentSettings();
-  const { context: importedContext } = useImportedContext();
+  const {
+    appendMessages,
+    error: memoryError,
+    state: memory,
+    status: memoryStatus,
+  } = useMemory();
   const { createEvent, events, removeEvent, updateEvent } = useCalendar();
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState('');
-  const [messages, setMessages] = useState<ChatMessage[]>(() => [
-    {
-      content:
-        'Hi! How do you want to get started? I can plan the next few hours, rearrange today, or add something to your calendar.',
-      id: 'welcome',
-      role: 'assistant',
-      time: timeLabel(),
-    },
-  ]);
   const [error, setError] = useState<string>();
   const [entranceOffset] = useState(() => new Animated.Value(64));
   const hasAutoStartedVoice = useRef(false);
@@ -80,6 +75,30 @@ export default function ChatScreen() {
     transcript,
     volume: voiceVolume,
   } = useVoiceInput();
+  const messages: ChatMessage[] = useMemo(
+    () => [
+      ...(memory.messages.length
+        ? []
+        : [
+            {
+              content:
+                'Hi! How do you want to get started? I can plan the next few hours, rearrange today, or add something to your calendar.',
+              id: 'welcome',
+              role: 'assistant' as const,
+              time: timeLabel(),
+            },
+          ]),
+      ...memory.messages.map((item) => ({
+        content: item.content,
+        id: item.id,
+        role: item.role,
+        time: new Intl.DateTimeFormat(undefined, { hour: 'numeric', minute: '2-digit' }).format(
+          new Date(item.createdAt),
+        ),
+      })),
+    ],
+    [memory.messages],
+  );
 
   useEffect(() => {
     Animated.spring(entranceOffset, {
@@ -177,14 +196,14 @@ export default function ChatScreen() {
       return;
     }
 
-    const userMessage: ChatMessage = {
+    const userMessage: StoredConversationMessage = {
       content,
-      id: `user-${Date.now()}`,
+      createdAt: new Date().toISOString(),
+      id: `chat-${Date.now()}-user`,
       role: 'user',
-      time: timeLabel(),
     };
-    const nextMessages = [...messages, userMessage];
-    setMessages(nextMessages);
+    const nextMessages = [...memory.messages, userMessage];
+    await appendMessages([userMessage]);
     setMessage('');
     setError(undefined);
     setIsSending(true);
@@ -193,20 +212,19 @@ export default function ChatScreen() {
       const turn = await requestCalendarAgentTurn({
         apiKey,
         events,
-        importedContext,
+        memoryContext: memoryForAgentPrompt(memory),
         messages: nextMessages.map(({ content: text, role }) => ({ content: text, role })),
         model,
       });
       const applied: string[] = [];
       for (const action of turn.actions) applied.push(await applyAction(action));
       const resultSuffix = applied.length ? `\n\n✓ ${applied.join('\n✓ ')}` : '';
-      setMessages((current) => [
-        ...current,
+      await appendMessages([
         {
           content: `${turn.reply}${resultSuffix}`,
-          id: `assistant-${Date.now()}`,
+          createdAt: new Date().toISOString(),
+          id: `chat-${Date.now()}-assistant`,
           role: 'assistant',
-          time: timeLabel(),
         },
       ]);
     } catch (sendError) {
@@ -276,8 +294,13 @@ export default function ChatScreen() {
           )}
         </ScrollView>
 
-        {!!(error ?? speechError) && (
-          <Text style={styles.error}>{error ?? speechError}</Text>
+          {!!(error ?? speechError ?? memoryError) && (
+          <Text style={styles.error}>{error ?? speechError ?? memoryError}</Text>
+        )}
+        {memoryStatus !== 'idle' && (
+          <Text style={styles.memoryStatus}>
+            {memoryStatus === 'compacting' ? 'compacting older chat…' : 'updating memory notebook…'}
+          </Text>
         )}
         {isListening && <VoiceWave level={voiceVolume} />}
 
@@ -413,6 +436,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     paddingHorizontal: spacing.lg,
     paddingVertical: spacing.xs,
+    textAlign: 'center',
+  },
+  memoryStatus: {
+    color: colors.muted,
+    fontFamily: fonts.hand,
+    fontSize: 13,
+    paddingHorizontal: spacing.lg,
     textAlign: 'center',
   },
   composerArea: {

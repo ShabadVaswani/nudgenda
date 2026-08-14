@@ -12,14 +12,22 @@ import {
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
+import { useAgentSettings } from '@/agent/AgentSettingsProvider';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { colors, fonts, spacing } from '@/constants/design';
 import { extractPickedDocument } from '@/context/fileExtractor';
-import { useImportedContext } from '@/context/ImportedContextProvider';
-import { createImportedContext, normalizeImportedText } from '@/context/structure';
+import {
+  DEFAULT_NOTEBOOK_FILTER_MODEL,
+  DEFAULT_NOTEBOOK_WRITER_MODEL,
+  runContextNotebookPipeline,
+  type ContextNotebookReport,
+} from '@/context/contextNotebookPipeline';
+import { normalizeImportedText } from '@/context/structure';
+import { useMemory } from '@/memory/MemoryProvider';
 
 type Preview = {
+  sourceId: string;
   sourceName: string;
   text: string;
 };
@@ -40,10 +48,14 @@ function ContextList({ label, values }: { label: string; values: string[] }) {
 
 export default function ImportContextScreen() {
   const router = useRouter();
-  const { context, remove, replace } = useImportedContext();
+  const { apiKey, isConfigured } = useAgentSettings();
+  const { addImportedNotebook, state: memory } = useMemory();
   const [error, setError] = useState<string>();
   const [isReading, setIsReading] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [pastedText, setPastedText] = useState('');
+  const [pipelineMessage, setPipelineMessage] = useState('');
+  const [pipelineReport, setPipelineReport] = useState<ContextNotebookReport>();
   const [preview, setPreview] = useState<Preview>();
 
   const goBack = () => {
@@ -54,7 +66,12 @@ export default function ImportContextScreen() {
   const previewPaste = () => {
     try {
       setError(undefined);
-      setPreview({ sourceName: 'Pasted context', text: normalizeImportedText(pastedText) });
+      setPipelineReport(undefined);
+      setPreview({
+        sourceId: `import-${Date.now()}`,
+        sourceName: 'Pasted context',
+        text: normalizeImportedText(pastedText),
+      });
     } catch (pasteError) {
       setError(pasteError instanceof Error ? pasteError.message : 'That text could not be read.');
     }
@@ -73,7 +90,8 @@ export default function ImportContextScreen() {
     try {
       const asset = result.assets[0];
       const text = await extractPickedDocument(asset);
-      setPreview({ sourceName: asset.name, text });
+      setPreview({ sourceId: `import-${Date.now()}`, sourceName: asset.name, text });
+      setPipelineReport(undefined);
     } catch (fileError) {
       setError(fileError instanceof Error ? fileError.message : 'That file could not be imported.');
     } finally {
@@ -81,10 +99,37 @@ export default function ImportContextScreen() {
     }
   };
 
-  const applyPreview = async () => {
-    if (!preview) return;
-    await replace(createImportedContext(preview.sourceName, preview.text));
-    goBack();
+  const processPreview = async () => {
+    if (!preview || !isConfigured) return;
+    setError(undefined);
+    setIsProcessing(true);
+    setPipelineReport(undefined);
+    try {
+      const report = await runContextNotebookPipeline({
+        apiKey,
+        existingNotebook: memory.notebook,
+        filterModel: DEFAULT_NOTEBOOK_FILTER_MODEL,
+        onProgress: setPipelineMessage,
+        sourceId: preview.sourceId,
+        sourceName: preview.sourceName,
+        text: preview.text,
+        writerModel: DEFAULT_NOTEBOOK_WRITER_MODEL,
+      });
+      await addImportedNotebook({
+        originalText: preview.text,
+        report,
+        sourceId: preview.sourceId,
+        sourceName: preview.sourceName,
+      });
+      setPipelineReport(report);
+      setPipelineMessage('Notebook updated');
+    } catch (pipelineError) {
+      setError(
+        pipelineError instanceof Error ? pipelineError.message : 'The memory pipeline could not finish.',
+      );
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -99,32 +144,23 @@ export default function ImportContextScreen() {
 
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <NeoCard backgroundColor={colors.periwinkle} style={styles.card}>
-            <Text style={styles.eyebrow}>PRIVATE UNTIL YOU CHAT</Text>
+            <Text style={styles.eyebrow}>PRIVATE UNTIL YOU ANALYZE</Text>
             <Text style={styles.cardTitle}>bring earlier context into Nudgenda</Text>
             <Text style={styles.body}>
-              Extraction happens on this device. The original file is discarded after reading. The
-              extracted context is sent to your selected OpenRouter model only when you chat, never
-              to a Nudgenda server.
+              Text extraction happens on this device. The source text is retained locally for
+              provenance, while the original file is never uploaded. Context is sent to OpenRouter
+              only when you choose analysis or later chat, never to a Nudgenda server.
             </Text>
           </NeoCard>
 
-          {context && !preview && (
+          {!!memory.sources.length && !preview && (
             <NeoCard backgroundColor={colors.lime} style={styles.card}>
-              <Text style={styles.eyebrow}>ACTIVE CONTEXT · {context.sourceName}</Text>
-              <Text style={styles.cardTitle}>what the agent currently remembers</Text>
-              <Text style={styles.body}>{context.structured.summary}</Text>
-              <ContextList label="PREFERENCES" values={context.structured.preferences} />
-              <ContextList label="CONSTRAINTS" values={context.structured.constraints} />
-              <ContextList label="TASKS" values={context.structured.tasks} />
-              <ContextList label="UNFINISHED" values={context.structured.unfinishedItems} />
-              <Text numberOfLines={12} style={styles.rawPreview}>
-                {context.extractedText}
+              <Text style={styles.eyebrow}>
+                ACTIVE MEMORY · {memory.sources.length} IMPORT{memory.sources.length === 1 ? '' : 'S'}
               </Text>
-              <Pressable
-                onPress={() => void remove()}
-                style={({ pressed }) => [styles.removeButton, pressed && styles.pressed]}>
-                <Text style={styles.buttonText}>remove imported context</Text>
-              </Pressable>
+              <Text style={styles.cardTitle}>what the agent currently remembers</Text>
+              <Text selectable style={styles.rawPreview}>{memory.notebook}</Text>
+              <ContextList label="SOURCES" values={memory.sources.map((source) => source.name)} />
             </NeoCard>
           )}
 
@@ -135,6 +171,7 @@ export default function ImportContextScreen() {
               onChangeText={(value) => {
                 setPastedText(value);
                 setPreview(undefined);
+                setPipelineReport(undefined);
               }}
               placeholder="Paste an earlier conversation, notes, preferences, or unfinished tasks…"
               placeholderTextColor={colors.muted}
@@ -181,20 +218,61 @@ export default function ImportContextScreen() {
                 {preview.text}
               </Text>
               <Text style={styles.disclosure}>
-                Applying stores this extracted text locally. It will become untrusted reference
-                context for future agent requests; it will not create events by itself.
+                Processing asks {DEFAULT_NOTEBOOK_FILTER_MODEL} to select relevant user messages,
+                then {DEFAULT_NOTEBOOK_WRITER_MODEL} updates the Markdown notebook from the original
+                evidence. The API key is never stored with the notebook.
               </Text>
+              {!pipelineReport && (
+                <Pressable
+                  disabled={isProcessing || !isConfigured}
+                  onPress={() => void processPreview()}
+                  style={({ pressed }) => [
+                    styles.processButton,
+                    (!isConfigured || isProcessing) && styles.disabled,
+                    pressed && styles.pressed,
+                  ]}>
+                  {isProcessing ? (
+                    <View style={styles.processingRow}>
+                      <ActivityIndicator color={colors.ink} />
+                      <Text style={styles.buttonText}>{pipelineMessage}</Text>
+                    </View>
+                  ) : (
+                    <Text style={styles.buttonText}>
+                      {isConfigured ? 'analyze and remember' : 'add OpenRouter key first'}
+                    </Text>
+                  )}
+                </Pressable>
+              )}
+              {pipelineReport && (
+                <View style={styles.pipelineResult}>
+                  <Text style={styles.groupLabel}>MEMORY UPDATED</Text>
+                  <Text selectable style={styles.rawPreview}>{pipelineReport.notebook}</Text>
+                  <Text style={styles.disclosure}>
+                    {pipelineReport.originalCharacters.toLocaleString()} source characters →{' '}
+                    {pipelineReport.selectedEvidenceCount} relevant user messages · notebook stored
+                    locally
+                  </Text>
+                </View>
+              )}
               <View style={styles.actionRow}>
-                <Pressable
-                  onPress={() => setPreview(undefined)}
-                  style={({ pressed }) => [styles.secondaryButton, styles.flex, pressed && styles.pressed]}>
-                  <Text style={styles.buttonText}>discard</Text>
-                </Pressable>
-                <Pressable
-                  onPress={() => void applyPreview()}
-                  style={({ pressed }) => [styles.applyButton, styles.flex, pressed && styles.pressed]}>
-                  <Text style={styles.buttonText}>apply context</Text>
-                </Pressable>
+                {!pipelineReport && (
+                  <Pressable
+                    onPress={() => setPreview(undefined)}
+                    style={({ pressed }) => [
+                      styles.secondaryButton,
+                      styles.flex,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={styles.buttonText}>discard</Text>
+                  </Pressable>
+                )}
+                {pipelineReport && (
+                  <Pressable
+                    onPress={goBack}
+                    style={({ pressed }) => [styles.applyButton, styles.flex, pressed && styles.pressed]}>
+                    <Text style={styles.buttonText}>done</Text>
+                  </Pressable>
+                )}
               </View>
             </NeoCard>
           )}
@@ -265,6 +343,25 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     minHeight: 46,
     paddingHorizontal: spacing.md,
+  },
+  processButton: {
+    alignItems: 'center',
+    backgroundColor: colors.periwinkle,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    justifyContent: 'center',
+    minHeight: 50,
+    paddingHorizontal: spacing.md,
+  },
+  processingRow: { alignItems: 'center', flexDirection: 'row', gap: spacing.sm },
+  pipelineResult: {
+    backgroundColor: colors.white,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    gap: spacing.sm,
+    padding: spacing.md,
   },
   removeButton: {
     alignItems: 'center',

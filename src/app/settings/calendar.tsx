@@ -19,7 +19,7 @@ import { useCalendar } from '@/calendar/CalendarProvider';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { colors, fonts, spacing } from '@/constants/design';
-import { useImportedContext } from '@/context/ImportedContextProvider';
+import { useMemory } from '@/memory/MemoryProvider';
 
 const FREE_MODEL_OPTIONS = [
   { id: 'openrouter/free', label: 'Auto', recommended: true },
@@ -32,7 +32,12 @@ const FREE_MODEL_OPTIONS = [
 export default function SettingsScreen() {
   const router = useRouter();
   const { apiKey, clearApiKey, isConfigured, model, save } = useAgentSettings();
-  const { context: importedContext } = useImportedContext();
+  const {
+    clear: clearMemory,
+    runMaintenance,
+    state: memory,
+    status: memoryStatus,
+  } = useMemory();
   const {
     calendarAccountLabel,
     connectDeviceCalendar,
@@ -194,22 +199,41 @@ export default function SettingsScreen() {
           </NeoCard>
 
           <NeoCard backgroundColor={colors.lime} style={styles.card}>
-            <Text style={styles.eyebrow}>IMPORTED CONTEXT</Text>
+            <Text style={styles.eyebrow}>AGENT MEMORY</Text>
             <Text style={styles.cardTitle}>
-              {importedContext ? importedContext.sourceName : 'continue from earlier context'}
+              {memory.messages.length || memory.sources.length
+                ? `${memory.messages.length} messages · ${memory.sources.length} imports`
+                : 'start a context notebook'}
             </Text>
             <Text style={styles.body}>
-              {importedContext
-                ? importedContext.structured.summary
-                : 'Paste text or choose a TXT, Markdown, JSON, or text-based PDF file. You will preview it before it affects the agent.'}
+              DeepSeek compacts older chat after 30 messages and consolidates the notebook after 9 PM
+              or the next time the app opens. Original messages remain stored locally.
             </Text>
+            {!!memory.notebook.trim() && (
+              <Text numberOfLines={9} style={styles.memoryPreview}>{memory.notebook}</Text>
+            )}
             <Pressable
               onPress={() => router.push('/settings/import-context')}
               style={({ pressed }) => [styles.primaryButton, pressed && styles.pressed]}>
               <Text style={styles.primaryButtonText}>
-                {importedContext ? 'inspect or replace context' : 'import context'}
+                {memory.sources.length ? 'inspect or import context' : 'import context'}
               </Text>
             </Pressable>
+            <View style={styles.buttonRow}>
+              <Pressable
+                disabled={!isConfigured || memoryStatus !== 'idle' || !memory.messages.length}
+                onPress={() => void runMaintenance(true)}
+                style={({ pressed }) => [styles.smallButton, pressed && styles.pressed]}>
+                <Text style={styles.smallButtonText}>
+                  {memoryStatus === 'idle' ? 'consolidate now' : 'updating…'}
+                </Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void clearMemory()}
+                style={({ pressed }) => [styles.dangerButton, pressed && styles.pressed]}>
+                <Text style={styles.smallButtonText}>clear memory</Text>
+              </Pressable>
+            </View>
           </NeoCard>
 
           <Text style={styles.footnote}>
@@ -328,6 +352,17 @@ const styles = StyleSheet.create({
     color: colors.ink,
     fontFamily: fonts.handBold,
     fontSize: 15,
+  },
+  memoryPreview: {
+    backgroundColor: colors.white,
+    borderColor: colors.ink,
+    borderRadius: 9,
+    borderWidth: 2,
+    color: colors.ink,
+    fontFamily: fonts.hand,
+    fontSize: 14,
+    lineHeight: 19,
+    padding: spacing.sm,
   },
   modelButtonMeta: {
     color: colors.muted,

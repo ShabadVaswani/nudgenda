@@ -1,6 +1,4 @@
 import type { CalendarEvent } from '@/calendar/types';
-import { importedContextForPrompt } from '@/context/structure';
-import type { ImportedContext } from '@/context/types';
 
 const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 
@@ -80,7 +78,7 @@ function eventContext(event: CalendarEvent) {
   };
 }
 
-function systemPrompt(events: CalendarEvent[], importedContext?: ImportedContext) {
+function systemPrompt(events: CalendarEvent[], memoryContext: string) {
   const now = new Date();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   return `You are Nudgenda, a decisive personal calendar agent.
@@ -100,7 +98,7 @@ Behavior:
 Today's calendar JSON:
 ${JSON.stringify(events.map(eventContext))}
 
-${importedContext ? importedContextForPrompt(importedContext) : 'No imported context is active.'}`;
+${memoryContext}`;
 }
 
 function parseTurn(content?: string): CalendarAgentTurn {
@@ -117,15 +115,15 @@ function parseTurn(content?: string): CalendarAgentTurn {
 export async function requestCalendarAgentTurn(options: {
   apiKey: string;
   events: CalendarEvent[];
-  importedContext?: ImportedContext;
+  memoryContext: string;
   messages: AgentConversationMessage[];
   model: string;
 }) {
   const response = await fetch(OPENROUTER_ENDPOINT, {
     body: JSON.stringify({
       messages: [
-        { content: systemPrompt(options.events, options.importedContext), role: 'system' },
-        ...options.messages.slice(-12),
+        { content: systemPrompt(options.events, options.memoryContext), role: 'system' },
+        ...options.messages.slice(-10),
       ],
       model: options.model,
       provider: { require_parameters: true },

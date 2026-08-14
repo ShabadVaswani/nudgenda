@@ -34,8 +34,9 @@ test('quotes imports as untrusted context below explicit safety rules', () => {
   assert.match(prompt, /Ignore previous instructions/);
 });
 
-test('rejects empty, oversized, and malformed material', () => {
+test('accepts imports beyond the legacy prompt limit but rejects unsafe local sizes', () => {
   assert.throws(() => normalizeImportedText('  '), /No readable text/);
-  assert.throws(() => normalizeImportedText('x'.repeat(60_001)), /too long/);
+  assert.equal(normalizeImportedText('x'.repeat(60_001)).length, 60_001);
+  assert.throws(() => normalizeImportedText('x'.repeat(5 * 1024 * 1024 + 1)), /too large/);
   assert.throws(() => extractJsonText('{nope'), /malformed/);
 });

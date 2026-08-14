@@ -10,7 +10,7 @@ import { GestureHandlerRootView } from 'react-native-gesture-handler';
 
 import { AgentSettingsProvider } from '@/agent/AgentSettingsProvider';
 import { CalendarProvider } from '@/calendar/CalendarProvider';
-import { ImportedContextProvider } from '@/context/ImportedContextProvider';
+import { MemoryProvider } from '@/memory/MemoryProvider';
 
 void SplashScreen.preventAutoHideAsync();
 
@@ -34,7 +34,7 @@ export default function RootLayout() {
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
       <AgentSettingsProvider>
-        <ImportedContextProvider>
+        <MemoryProvider>
           <CalendarProvider>
             <StatusBar style="dark" />
             <Stack screenOptions={{ headerShown: false, animation: 'slide_from_right' }}>
@@ -46,7 +46,7 @@ export default function RootLayout() {
               <Stack.Screen name="settings/import-context" />
             </Stack>
           </CalendarProvider>
-        </ImportedContextProvider>
+        </MemoryProvider>
       </AgentSettingsProvider>
     </GestureHandlerRootView>
   );

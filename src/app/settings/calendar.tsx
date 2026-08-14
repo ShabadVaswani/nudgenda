@@ -21,12 +21,15 @@ import { OutlinedTitle } from '@/components/OutlinedTitle';
 import { colors, fonts, spacing } from '@/constants/design';
 import { useMemory } from '@/memory/MemoryProvider';
 
-const FREE_MODEL_OPTIONS = [
-  { id: 'openrouter/free', label: 'Auto', recommended: true },
-  { id: 'nvidia/nemotron-3-super-120b-a12b:free', label: 'Nemotron 3 Super', recommended: false },
-  { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B', recommended: false },
-  { id: 'openai/gpt-oss-20b:free', label: 'GPT-OSS 20B', recommended: false },
-  { id: 'liquid/lfm-2.5-2.6b:free', label: 'LFM 2.5', recommended: false },
+const MODEL_OPTIONS = [
+  { id: 'openrouter/free', label: 'Auto', meta: 'recommended · free' },
+  { id: 'google/gemma-4-26b-a4b-it:free', label: 'Gemma 4 26B', meta: 'free · open model' },
+  { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash', meta: 'budget · fast' },
+  { id: 'openai/gpt-5.6-luna', label: 'GPT-5.6 Luna', meta: 'budget · capable' },
+  { id: 'google/gemini-3.7-flash', label: 'Gemini 3.7 Flash', meta: 'balanced · long context' },
+  { id: 'openai/gpt-5.6-terra', label: 'GPT-5.6 Terra', meta: 'strong · balanced' },
+  { id: 'anthropic/claude-sonnet-5', label: 'Claude Sonnet 5', meta: 'premium · strong reasoning' },
+  { id: 'openai/gpt-5.6-sol', label: 'GPT-5.6 Sol', meta: 'premium · top quality' },
 ] as const;
 
 export default function SettingsScreen() {
@@ -150,12 +153,13 @@ export default function SettingsScreen() {
               style={styles.input}
               value={draftModel}
             />
-            <Text style={styles.recommendedHeading}>RECOMMENDED FREE MODELS</Text>
+            <Text style={styles.recommendedHeading}>RECOMMENDED MODELS</Text>
             <View style={styles.modelOptions}>
-              {FREE_MODEL_OPTIONS.map((option) => {
+              {MODEL_OPTIONS.map((option) => {
                 const selected = draftModel === option.id;
                 return (
                   <Pressable
+                    accessibilityLabel={`${option.label}, ${option.meta}`}
                     accessibilityRole="button"
                     accessibilityState={{ selected }}
                     key={option.id}
@@ -166,9 +170,7 @@ export default function SettingsScreen() {
                       pressed && styles.pressed,
                     ]}>
                     <Text style={styles.modelButtonLabel}>{option.label}</Text>
-                    <Text style={styles.modelButtonMeta}>
-                      {option.recommended ? 'recommended · free' : 'free'}
-                    </Text>
+                    <Text style={styles.modelButtonMeta}>{option.meta}</Text>
                   </Pressable>
                 );
               })}
@@ -177,7 +179,8 @@ export default function SettingsScreen() {
               {Platform.OS === 'web'
                 ? 'The key stays in this browser’s local storage and is sent directly to OpenRouter.'
                 : 'The key is stored in Android secure storage and is sent directly to OpenRouter.'}{' '}
-              The default openrouter/free route uses currently available free models.
+              The default openrouter/free route uses currently available free models. Paid choices use
+              your OpenRouter credits; you can still enter any model ID above.
             </Text>
             <View style={styles.buttonRow}>
               <Pressable

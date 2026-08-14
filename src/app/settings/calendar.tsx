@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Platform,
   Pressable,
@@ -15,6 +15,7 @@ import {
   DEFAULT_OPENROUTER_MODEL,
   useAgentSettings,
 } from '@/agent/AgentSettingsProvider';
+import { fetchOpenRouterModels, type OpenRouterModel } from '@/agent/openRouterModels';
 import { useCalendar } from '@/calendar/CalendarProvider';
 import { NeoCard } from '@/components/NeoCard';
 import { OutlinedTitle } from '@/components/OutlinedTitle';
@@ -37,6 +38,7 @@ export default function SettingsScreen() {
   const { apiKey, clearApiKey, isConfigured, model, save } = useAgentSettings();
   const {
     clear: clearMemory,
+    error: memoryError,
     runMaintenance,
     state: memory,
     status: memoryStatus,
@@ -53,8 +55,31 @@ export default function SettingsScreen() {
   } = useCalendar();
   const [draft, setDraft] = useState<{ apiKey: string; model: string }>();
   const [saved, setSaved] = useState(false);
+  const [modelCatalog, setModelCatalog] = useState<OpenRouterModel[]>([]);
+  const [modelCatalogError, setModelCatalogError] = useState<string>();
+  const [modelQuery, setModelQuery] = useState('');
   const draftKey = draft?.apiKey ?? apiKey;
   const draftModel = draft?.model ?? model;
+  const matchingModels = useMemo(() => {
+    const query = modelQuery.trim().toLowerCase();
+    if (!query) return [];
+    return modelCatalog
+      .filter((item) => `${item.name} ${item.id}`.toLowerCase().includes(query))
+      .slice(0, 12);
+  }, [modelCatalog, modelQuery]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    fetchOpenRouterModels(controller.signal)
+      .then(setModelCatalog)
+      .catch((catalogError) => {
+        if (catalogError instanceof Error && catalogError.name === 'AbortError') return;
+        setModelCatalogError(
+          catalogError instanceof Error ? catalogError.message : 'Could not load model catalog.',
+        );
+      });
+    return () => controller.abort();
+  }, []);
 
   const saveOpenRouter = async () => {
     await save(draftKey, draftModel);
@@ -175,6 +200,51 @@ export default function SettingsScreen() {
                 );
               })}
             </View>
+            <Text style={styles.recommendedHeading}>ALL OPENROUTER CHAT MODELS</Text>
+            <TextInput
+              autoCapitalize="none"
+              autoCorrect={false}
+              onChangeText={setModelQuery}
+              placeholder={
+                modelCatalog.length
+                  ? `search ${modelCatalog.length} available models…`
+                  : 'loading live model catalog…'
+              }
+              placeholderTextColor={colors.muted}
+              style={styles.input}
+              value={modelQuery}
+            />
+            {!!modelCatalogError && <Text style={styles.catalogError}>{modelCatalogError}</Text>}
+            {!!modelQuery.trim() && !modelCatalogError && !matchingModels.length && (
+              <Text style={styles.catalogStatus}>no matching chat models</Text>
+            )}
+            <View style={styles.catalogResults}>
+              {matchingModels.map((option) => {
+                const selected = draftModel === option.id;
+                return (
+                  <Pressable
+                    key={option.id}
+                    onPress={() => {
+                      setDraft({ apiKey: draftKey, model: option.id });
+                      setModelQuery('');
+                    }}
+                    style={({ pressed }) => [
+                      styles.catalogResult,
+                      selected && styles.modelButtonSelected,
+                      pressed && styles.pressed,
+                    ]}>
+                    <Text style={styles.modelButtonLabel}>{option.name}</Text>
+                    <Text numberOfLines={1} style={styles.modelButtonMeta}>{option.id}</Text>
+                    <Text style={styles.modelButtonMeta}>
+                      {option.priceLabel}
+                      {option.contextLength
+                        ? ` · ${Math.round(option.contextLength / 1000)}K context`
+                        : ''}
+                    </Text>
+                  </Pressable>
+                );
+              })}
+            </View>
             <Text style={styles.body}>
               {Platform.OS === 'web'
                 ? 'The key stays in this browser’s local storage and is sent directly to OpenRouter.'
@@ -212,6 +282,7 @@ export default function SettingsScreen() {
               DeepSeek compacts older chat after 30 messages and consolidates the notebook after 9 PM
               or the next time the app opens. Original messages remain stored locally.
             </Text>
+            {!!memoryError && <Text style={styles.catalogError}>{memoryError}</Text>}
             {!!memory.notebook.trim() && (
               <Text numberOfLines={9} style={styles.memoryPreview}>{memory.notebook}</Text>
             )}
@@ -371,6 +442,27 @@ const styles = StyleSheet.create({
     color: colors.muted,
     fontFamily: fonts.hand,
     fontSize: 12,
+  },
+  catalogResults: {
+    gap: spacing.sm,
+  },
+  catalogResult: {
+    backgroundColor: colors.white,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  catalogError: {
+    color: '#8A2739',
+    fontFamily: fonts.handBold,
+    fontSize: 14,
+  },
+  catalogStatus: {
+    color: colors.muted,
+    fontFamily: fonts.hand,
+    fontSize: 14,
   },
   buttonRow: {
     flexDirection: 'row',

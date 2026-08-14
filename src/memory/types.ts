@@ -24,6 +24,7 @@ export type MemoryState = {
   history: DailyMemoryHistory[];
   lastConsolidatedAt?: string;
   lastConsolidatedMessage: number;
+  lastNightlyAttemptAt?: string;
   messages: StoredConversationMessage[];
   notebook: string;
   rollingSummary: string;

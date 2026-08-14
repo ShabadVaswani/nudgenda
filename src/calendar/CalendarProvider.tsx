@@ -37,6 +37,7 @@ type CalendarContextValue = {
   isGoogleCalendarAvailable: boolean;
   isGoogleCalendarConfigured: boolean;
   isLoading: boolean;
+  listDay: (day: Date) => Promise<CalendarEvent[]>;
   openEvent: (eventId: string) => Promise<boolean>;
   permissionCanAskAgain: boolean;
   refresh: () => Promise<void>;
@@ -244,6 +245,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
       isGoogleCalendarAvailable: googleCalendar.isAvailable,
       isGoogleCalendarConfigured: googleCalendar.isConfigured,
       isLoading,
+      listDay: (day) => repository.listDay(day),
       openEvent: async (eventId) => {
         if (!repository.open) return false;
         await repository.open(eventId);

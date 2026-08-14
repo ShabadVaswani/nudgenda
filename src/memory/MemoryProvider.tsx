@@ -39,6 +39,10 @@ type MemoryContextValue = {
   clear: () => Promise<void>;
   error?: string;
   isLoading: boolean;
+  replaceConversationFrom: (
+    messageId: string,
+    replacement: StoredConversationMessage,
+  ) => Promise<StoredConversationMessage[]>;
   runMaintenance: (forceNightly?: boolean) => Promise<void>;
   state: MemoryState;
   status: MaintenanceStatus;
@@ -101,6 +105,22 @@ export function MemoryProvider({ children }: PropsWithChildren) {
     [replaceState],
   );
 
+  const replaceConversationFrom = useCallback(
+    async (messageId: string, replacement: StoredConversationMessage) => {
+      const index = stateRef.current.messages.findIndex((message) => message.id === messageId);
+      if (index < 0) throw new Error('That message is no longer available to edit.');
+      const messages = [...stateRef.current.messages.slice(0, index), replacement];
+      await replaceState({
+        ...stateRef.current,
+        compactedThrough: Math.min(stateRef.current.compactedThrough, index),
+        lastConsolidatedMessage: Math.min(stateRef.current.lastConsolidatedMessage, index),
+        messages,
+      });
+      return messages;
+    },
+    [replaceState],
+  );
+
   const addImportedNotebook = useCallback(
     async (options: {
       originalText: string;
@@ -158,6 +178,8 @@ export function MemoryProvider({ children }: PropsWithChildren) {
         }
         if (forceNightly || isNightlyConsolidationDue(next)) {
           setStatus('consolidating');
+          next = { ...next, lastNightlyAttemptAt: new Date().toISOString() };
+          await replaceState(next);
           next = await consolidateNightlyMemory({ apiKey, state: next });
           await replaceState(next);
         }
@@ -206,11 +228,22 @@ export function MemoryProvider({ children }: PropsWithChildren) {
       clear,
       error,
       isLoading,
+      replaceConversationFrom,
       runMaintenance,
       state,
       status,
     }),
-    [addImportedNotebook, appendMessages, clear, error, isLoading, runMaintenance, state, status],
+    [
+      addImportedNotebook,
+      appendMessages,
+      clear,
+      error,
+      isLoading,
+      replaceConversationFrom,
+      runMaintenance,
+      state,
+      status,
+    ],
   );
   return <Context.Provider value={value}>{children}</Context.Provider>;
 }

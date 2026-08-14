@@ -41,9 +41,30 @@ test('nightly consolidation is due after 9 PM or for messages from an earlier da
   assert.equal(isNightlyConsolidationDue(today, new Date('2026-08-14T08:00:00')), true);
 });
 
+test('nightly consolidation observes a persisted failure cooldown', () => {
+  const state = {
+    ...EMPTY_MEMORY_STATE,
+    lastNightlyAttemptAt: '2026-08-13T21:30:00',
+    messages: messages(1),
+  };
+  assert.equal(isNightlyConsolidationDue(state, new Date('2026-08-13T22:00:00')), false);
+  assert.equal(isNightlyConsolidationDue(state, new Date('2026-08-14T04:00:00')), true);
+});
+
 test('parses the two Markdown documents from nightly consolidation', () => {
   assert.deepEqual(
     parseConsolidationOutput(`${EMPTY_CONTEXT_NOTEBOOK}\n===DAILY_HISTORY===\n# Daily memory\n- Done.`),
+    { history: '# Daily memory\n- Done.', notebook: EMPTY_CONTEXT_NOTEBOOK },
+  );
+});
+
+test('accepts common nightly separator variations and a daily heading fallback', () => {
+  assert.deepEqual(
+    parseConsolidationOutput(`${EMPTY_CONTEXT_NOTEBOOK}\n=== DAILY HISTORY ===\n# Daily memory\n- Done.`),
+    { history: '# Daily memory\n- Done.', notebook: EMPTY_CONTEXT_NOTEBOOK },
+  );
+  assert.deepEqual(
+    parseConsolidationOutput(`${EMPTY_CONTEXT_NOTEBOOK}\n# Daily memory\n- Done.`),
     { history: '# Daily memory\n- Done.', notebook: EMPTY_CONTEXT_NOTEBOOK },
   );
 });

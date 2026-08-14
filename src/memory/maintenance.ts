@@ -7,6 +7,7 @@ export const COMPACTION_CHARACTER_TRIGGER = 30_000;
 export const COMPACTION_BATCH_SIZE = 20;
 export const RECENT_MESSAGE_WINDOW = 10;
 export const NIGHTLY_CONSOLIDATION_HOUR = 21;
+export const NIGHTLY_RETRY_COOLDOWN_MS = 6 * 60 * 60_000;
 
 const REQUIRED_NOTEBOOK_HEADINGS = [
   '# User context',
@@ -52,6 +53,12 @@ export function compactionBatch(state: MemoryState) {
 
 export function isNightlyConsolidationDue(state: MemoryState, now = new Date()) {
   if (state.lastConsolidatedMessage >= state.messages.length) return false;
+  if (
+    state.lastNightlyAttemptAt &&
+    now.getTime() - new Date(state.lastNightlyAttemptAt).getTime() < NIGHTLY_RETRY_COOLDOWN_MS
+  ) {
+    return false;
+  }
   const today = localDateKey(now);
   const pendingIncludesEarlierDay = state.messages
     .slice(state.lastConsolidatedMessage)
@@ -140,11 +147,16 @@ Rules:
 - Never output JSON or YAML.`;
 
 export function parseConsolidationOutput(content: string) {
-  const marker = '\n===DAILY_HISTORY===\n';
-  const index = content.indexOf(marker);
-  if (index < 0) throw new Error('The nightly model did not separate notebook and daily history.');
-  const notebook = content.slice(0, index).trim();
-  const history = content.slice(index + marker.length).trim();
+  const cleaned = content.trim().replace(/^```(?:markdown)?\s*/i, '').replace(/\s*```$/i, '');
+  const marker = /^\s*={2,}\s*DAILY[_\s-]*HISTORY\s*={2,}\s*$/im;
+  const markerMatch = marker.exec(cleaned);
+  const dailyHeading = /^#\s+Daily memory\b/im;
+  const headingMatch = dailyHeading.exec(cleaned);
+  const splitIndex = markerMatch?.index ?? headingMatch?.index ?? -1;
+  if (splitIndex < 0) throw new Error('The nightly model returned one document instead of two.');
+  const separatorLength = markerMatch ? markerMatch[0].length : 0;
+  const notebook = cleaned.slice(0, splitIndex).trim();
+  const history = cleaned.slice(splitIndex + separatorLength).trim();
   if (!notebook || !history) throw new Error('The nightly model returned incomplete memory documents.');
   return { history, notebook };
 }

@@ -21,7 +21,8 @@ import {
   requestCalendarAgentTurn,
 } from '@/agent/openRouter';
 import { useCalendar } from '@/calendar/CalendarProvider';
-import type { CalendarEventDraft } from '@/calendar/types';
+import { deduplicateCalendarEvents } from '@/calendar/deduplicate';
+import type { CalendarEvent, CalendarEventDraft } from '@/calendar/types';
 import { MicButton } from '@/components/MicButton';
 import { NeoCard } from '@/components/NeoCard';
 import { VoiceWave } from '@/components/VoiceWave';
@@ -56,13 +57,15 @@ export default function ChatScreen() {
   const {
     appendMessages,
     error: memoryError,
+    replaceConversationFrom,
     state: memory,
-    status: memoryStatus,
   } = useMemory();
-  const { createEvent, events, removeEvent, updateEvent } = useCalendar();
+  const { createEvent, events, listDay, removeEvent, updateEvent } = useCalendar();
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState<string>();
+  const [editingMessageId, setEditingMessageId] = useState<string>();
+  const [failedMessage, setFailedMessage] = useState<StoredConversationMessage>();
   const [entranceOffset] = useState(() => new Animated.Value(64));
   const hasAutoStartedVoice = useRef(false);
   const scrollRef = useRef<ScrollView>(null);
@@ -153,13 +156,13 @@ export default function ChatScreen() {
     void beginListening();
   }, [beginListening, params.listening]);
 
-  const applyAction = async (action: CalendarAgentAction) => {
+  const applyAction = async (action: CalendarAgentAction, calendarContext: CalendarEvent[]) => {
     if (action.type === 'create') {
       if (!action.title || !action.start || !action.end) {
         throw new Error('The agent omitted information required to create an event');
       }
       const draft: CalendarEventDraft = {
-        calendarId: events[0]?.calendarId ?? 'primary',
+        calendarId: calendarContext[0]?.calendarId ?? events[0]?.calendarId ?? 'primary',
         description: action.description ?? undefined,
         end: dateTime(action.end)!,
         reminders: { useDefault: true },
@@ -171,8 +174,10 @@ export default function ChatScreen() {
     }
 
     if (!action.eventId) throw new Error('The agent did not identify the event to change');
-    const existing = events.find((event) => event.id === action.eventId);
-    if (!existing) throw new Error('The event selected by the agent is no longer on today’s calendar');
+    const existing = calendarContext.find((event) => event.id === action.eventId);
+    if (!existing) {
+      throw new Error('The event selected by the agent could not be found in the upcoming calendar.');
+    }
 
     if (action.type === 'delete') {
       await removeEvent(existing.id, existing.calendarId);
@@ -188,6 +193,54 @@ export default function ChatScreen() {
     return `updated ${action.title ?? existing.summary}`;
   };
 
+  const performAgentTurn = async (
+    nextMessages: StoredConversationMessage[],
+    sourceMessage: StoredConversationMessage,
+  ) => {
+    setError(undefined);
+    setFailedMessage(undefined);
+    setIsSending(true);
+
+    try {
+      const today = new Date();
+      const calendarContext = deduplicateCalendarEvents((
+        await Promise.all(
+          Array.from({ length: 8 }, (_, dayOffset) => {
+            const day = new Date(today);
+            day.setDate(today.getDate() + dayOffset);
+            return listDay(day);
+          }),
+        )
+      ).flat());
+      const turn = await requestCalendarAgentTurn({
+        apiKey,
+        events: calendarContext,
+        memoryContext: memoryForAgentPrompt(memory),
+        messages: nextMessages.map(({ content: text, role }) => ({ content: text, role })),
+        model,
+      });
+      const applied: string[] = [];
+      for (const action of turn.actions) {
+        applied.push(await applyAction(action, calendarContext));
+      }
+      const resultSuffix = applied.length ? `\n\n✓ ${applied.join('\n✓ ')}` : '';
+      await appendMessages([
+        {
+          content: `${turn.reply}${resultSuffix}`,
+          createdAt: new Date().toISOString(),
+          id: `chat-${Date.now()}-assistant`,
+          role: 'assistant',
+        },
+      ]);
+      setEditingMessageId(undefined);
+    } catch (sendError) {
+      setError(sendError instanceof Error ? sendError.message : 'The calendar agent failed');
+      setFailedMessage(sourceMessage);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
   const send = async () => {
     const content = message.trim();
     if (!content || isSending) return;
@@ -199,39 +252,28 @@ export default function ChatScreen() {
     const userMessage: StoredConversationMessage = {
       content,
       createdAt: new Date().toISOString(),
-      id: `chat-${Date.now()}-user`,
+      id: editingMessageId ?? `chat-${Date.now()}-user`,
       role: 'user',
     };
-    const nextMessages = [...memory.messages, userMessage];
-    await appendMessages([userMessage]);
+    const nextMessages = editingMessageId
+      ? await replaceConversationFrom(editingMessageId, userMessage)
+      : [...memory.messages, userMessage];
+    if (!editingMessageId) await appendMessages([userMessage]);
     setMessage('');
-    setError(undefined);
-    setIsSending(true);
+    await performAgentTurn(nextMessages, userMessage);
+  };
 
-    try {
-      const turn = await requestCalendarAgentTurn({
-        apiKey,
-        events,
-        memoryContext: memoryForAgentPrompt(memory),
-        messages: nextMessages.map(({ content: text, role }) => ({ content: text, role })),
-        model,
-      });
-      const applied: string[] = [];
-      for (const action of turn.actions) applied.push(await applyAction(action));
-      const resultSuffix = applied.length ? `\n\n✓ ${applied.join('\n✓ ')}` : '';
-      await appendMessages([
-        {
-          content: `${turn.reply}${resultSuffix}`,
-          createdAt: new Date().toISOString(),
-          id: `chat-${Date.now()}-assistant`,
-          role: 'assistant',
-        },
-      ]);
-    } catch (sendError) {
-      setError(sendError instanceof Error ? sendError.message : 'The calendar agent failed');
-    } finally {
-      setIsSending(false);
-    }
+  const editMessage = (item: ChatMessage) => {
+    if (item.role !== 'user' || isSending) return;
+    setMessage(item.content);
+    setEditingMessageId(item.id);
+    setFailedMessage(undefined);
+    setError(undefined);
+  };
+
+  const retryFailedMessage = async () => {
+    if (!failedMessage || isSending) return;
+    await performAgentTurn(memory.messages, failedMessage);
   };
 
   return (
@@ -275,15 +317,23 @@ export default function ChatScreen() {
           )}
 
           {messages.map((item) => (
-            <NeoCard
-              backgroundColor={item.role === 'user' ? colors.lime : colors.periwinkle}
+            <Pressable
+              accessibilityHint={item.role === 'user' ? 'Hold to edit this message' : undefined}
+              accessibilityRole={item.role === 'user' ? 'button' : undefined}
+              delayLongPress={350}
+              disabled={item.role !== 'user' || isSending}
               key={item.id}
-              style={item.role === 'user' ? styles.userBubble : styles.agentBubble}>
-              <Text style={styles.meta}>
-                {item.role === 'user' ? 'YOU' : 'AGENT'} · {item.time}
-              </Text>
-              <Text style={styles.message}>{item.content}</Text>
-            </NeoCard>
+              onLongPress={() => editMessage(item)}
+              style={item.role === 'user' ? styles.userBubblePressable : styles.agentBubblePressable}>
+              <NeoCard
+                backgroundColor={item.role === 'user' ? colors.lime : colors.periwinkle}
+                style={styles.messageCard}>
+                <Text style={styles.meta}>
+                  {item.role === 'user' ? 'YOU' : 'AGENT'} · {item.time}
+                </Text>
+                <Text style={styles.message}>{item.content}</Text>
+              </NeoCard>
+            </Pressable>
           ))}
 
           {isSending && (
@@ -294,17 +344,36 @@ export default function ChatScreen() {
           )}
         </ScrollView>
 
-          {!!(error ?? speechError ?? memoryError) && (
+        {!!(error ?? speechError ?? memoryError) && (
           <Text style={styles.error}>{error ?? speechError ?? memoryError}</Text>
         )}
-        {memoryStatus !== 'idle' && (
-          <Text style={styles.memoryStatus}>
-            {memoryStatus === 'compacting' ? 'compacting older chat…' : 'updating memory notebook…'}
-          </Text>
+        {!!failedMessage && !isSending && (
+          <View style={styles.failureActions}>
+            <Pressable onPress={() => void retryFailedMessage()} style={styles.failureButton}>
+              <Text style={styles.failureButtonText}>retry</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => editMessage({ ...failedMessage, time: timeLabel() })}
+              style={styles.failureButton}>
+              <Text style={styles.failureButtonText}>edit</Text>
+            </Pressable>
+          </View>
         )}
         {isListening && <VoiceWave level={voiceVolume} />}
 
         <View style={styles.composerArea}>
+          {!!editingMessageId && (
+            <View style={styles.editingRow}>
+              <Text style={styles.editingText}>editing message</Text>
+              <Pressable
+                onPress={() => {
+                  setEditingMessageId(undefined);
+                  setMessage('');
+                }}>
+                <Text style={styles.editingCancel}>cancel</Text>
+              </Pressable>
+            </View>
+          )}
           <NeoCard style={styles.composer}>
             <TextInput
               accessibilityLabel="Message the calendar agent"
@@ -412,6 +481,18 @@ const styles = StyleSheet.create({
     maxWidth: '88%',
     padding: spacing.md,
   },
+  userBubblePressable: {
+    alignSelf: 'flex-end',
+    maxWidth: '82%',
+  },
+  agentBubblePressable: {
+    alignSelf: 'flex-start',
+    maxWidth: '88%',
+  },
+  messageCard: {
+    padding: spacing.md,
+    width: '100%',
+  },
   meta: {
     color: colors.ink,
     fontFamily: fonts.handBold,
@@ -438,16 +519,45 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xs,
     textAlign: 'center',
   },
-  memoryStatus: {
-    color: colors.muted,
-    fontFamily: fonts.hand,
-    fontSize: 13,
+  failureActions: {
+    alignSelf: 'center',
+    flexDirection: 'row',
+    gap: spacing.sm,
+    paddingBottom: spacing.xs,
+  },
+  failureButton: {
+    backgroundColor: colors.white,
+    borderColor: colors.ink,
+    borderRadius: 10,
+    borderWidth: 2,
     paddingHorizontal: spacing.lg,
-    textAlign: 'center',
+    paddingVertical: spacing.xs,
+  },
+  failureButtonText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 16,
   },
   composerArea: {
     paddingBottom: spacing.sm,
     paddingHorizontal: spacing.lg,
+  },
+  editingRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingBottom: spacing.xs,
+    paddingHorizontal: spacing.sm,
+  },
+  editingText: {
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 14,
+  },
+  editingCancel: {
+    color: '#8A2739',
+    fontFamily: fonts.handBold,
+    fontSize: 14,
   },
   composer: {
     alignItems: 'center',

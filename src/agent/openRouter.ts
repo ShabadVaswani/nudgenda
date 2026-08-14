@@ -1,6 +1,6 @@
 import type { CalendarEvent } from '@/calendar/types';
-
-const OPENROUTER_ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+import { requestOpenRouterJson } from '@/agent/openRouterRequest';
+import { formatAgentLocalTime } from '@/agent/timeContext';
 
 export type AgentConversationMessage = {
   content: string;
@@ -32,41 +32,6 @@ type OpenRouterResponse = {
   };
 };
 
-const responseSchema = {
-  name: 'nudgenda_calendar_turn',
-  schema: {
-    additionalProperties: false,
-    properties: {
-      actions: {
-        items: {
-          additionalProperties: false,
-          properties: {
-            description: { type: ['string', 'null'] },
-            end: {
-              description: 'ISO 8601 date-time with an explicit UTC offset, or null',
-              type: ['string', 'null'],
-            },
-            eventId: { type: ['string', 'null'] },
-            start: {
-              description: 'ISO 8601 date-time with an explicit UTC offset, or null',
-              type: ['string', 'null'],
-            },
-            title: { type: ['string', 'null'] },
-            type: { enum: ['create', 'update', 'delete'], type: 'string' },
-          },
-          required: ['type', 'eventId', 'title', 'start', 'end', 'description'],
-          type: 'object',
-        },
-        type: 'array',
-      },
-      reply: { type: 'string' },
-    },
-    required: ['reply', 'actions'],
-    type: 'object',
-  },
-  strict: true,
-};
-
 function eventContext(event: CalendarEvent) {
   return {
     calendar: event.calendarName ?? event.calendarId,
@@ -81,9 +46,11 @@ function eventContext(event: CalendarEvent) {
 function systemPrompt(events: CalendarEvent[], memoryContext: string) {
   const now = new Date();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const localDateTime = formatAgentLocalTime(now, timezone);
   return `You are Nudgenda, a decisive personal calendar agent.
-Current local date and time: ${now.toISOString()}
+Current local date and time: ${localDateTime}
 User timezone: ${timezone}
+Current UTC instant (reference only): ${now.toISOString()}
 
 Behavior:
 - Use the supplied calendar state as the source of truth.
@@ -91,11 +58,15 @@ Behavior:
 - If the user explicitly says this is only planning, a draft, or not to add it yet, return no actions.
 - For a vague request to plan time, plan the next few useful hours. Only plan the whole day when the user asks for it.
 - Do not overlap events unless the user explicitly requests it.
+- Never create two mutually exclusive alternatives (for example, two possible sleep times). Infer one reasonable choice from context; ask only if the choice is essential and genuinely ambiguous.
 - Preserve existing event IDs for updates and deletes.
 - Use concise, friendly replies. Never claim an action succeeded; say what you are going to do. The app reports what actually succeeded.
 - Dates in actions must be ISO 8601 strings with an explicit offset. For create actions, title, start, and end are required. For updates, eventId is required and only changed fields should be non-null. For deletes, eventId is required.
+- Return only one JSON object with this exact shape and no markdown fences:
+  {"reply":"short user-facing reply","actions":[{"type":"create|update|delete","eventId":null,"title":null,"start":null,"end":null,"description":null}]}
+- Every action must contain all six action fields. Use null for fields that do not apply.
 
-Today's calendar JSON:
+Calendar events for today and the upcoming week JSON:
 ${JSON.stringify(events.map(eventContext))}
 
 ${memoryContext}`;
@@ -104,8 +75,18 @@ ${memoryContext}`;
 function parseTurn(content?: string): CalendarAgentTurn {
   if (!content) throw new Error('The model returned an empty response');
   try {
-    const parsed = JSON.parse(content) as CalendarAgentTurn;
+    const withoutFence = content.trim().replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    const firstBrace = withoutFence.indexOf('{');
+    const lastBrace = withoutFence.lastIndexOf('}');
+    const candidate =
+      firstBrace >= 0 && lastBrace > firstBrace
+        ? withoutFence.slice(firstBrace, lastBrace + 1)
+        : withoutFence;
+    const parsed = JSON.parse(candidate) as CalendarAgentTurn;
     if (!parsed.reply || !Array.isArray(parsed.actions)) throw new Error('Missing response fields');
+    if (parsed.actions.some((action) => !['create', 'delete', 'update'].includes(action.type))) {
+      throw new Error('Invalid action');
+    }
     return parsed;
   } catch {
     throw new Error('The model returned an unreadable calendar response. Try again.');
@@ -119,37 +100,26 @@ export async function requestCalendarAgentTurn(options: {
   messages: AgentConversationMessage[];
   model: string;
 }) {
-  const response = await fetch(OPENROUTER_ENDPOINT, {
-    body: JSON.stringify({
+  const { payload } = await requestOpenRouterJson<OpenRouterResponse>({
+    apiKey: options.apiKey,
+    body: {
       messages: [
         { content: systemPrompt(options.events, options.memoryContext), role: 'system' },
         ...options.messages.slice(-10),
       ],
       model: options.model,
-      provider: { require_parameters: true },
-      response_format: { json_schema: responseSchema, type: 'json_schema' },
       stream: false,
       temperature: 0.25,
-    }),
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${options.apiKey}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://github.com/ShabadVaswani/nudgenda',
-      'X-Title': 'Nudgenda',
     },
-    method: 'POST',
+    title: 'Nudgenda',
+    validate: (responsePayload) => {
+      try {
+        parseTurn(responsePayload.choices?.[0]?.message?.content);
+        return true;
+      } catch {
+        return false;
+      }
+    },
   });
-
-  let payload: OpenRouterResponse;
-  try {
-    payload = (await response.json()) as OpenRouterResponse;
-  } catch {
-    throw new Error(`OpenRouter returned an unreadable response (${response.status})`);
-  }
-
-  if (!response.ok || payload.error) {
-    throw new Error(payload.error?.message ?? `OpenRouter request failed (${response.status})`);
-  }
   return parseTurn(payload.choices?.[0]?.message?.content);
 }

@@ -1,4 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   BackHandler,
@@ -20,6 +21,11 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { useCalendar } from '@/calendar/CalendarProvider';
 import { deduplicateCalendarEvents } from '@/calendar/deduplicate';
+import {
+  minuteFromLocalDay,
+  nextLocalDay,
+  shouldShowTomorrow,
+} from '@/calendar/homeRange';
 import { presentCalendarEvent } from '@/calendar/presentation';
 import {
   clamp,
@@ -42,6 +48,7 @@ import type { ScheduleItem } from '@/data/schedule';
 import { isUpwardChatIntent, shouldOpenChatFromSwipe } from '@/navigation/homeChatGesture';
 
 const EVENT_GAP = 5;
+let retainedTimelineScrollOffset = 0;
 
 type TimelineItem = ScheduleItem & {
   calendarEvent: CalendarEvent;
@@ -65,9 +72,13 @@ function getEventDate(value: CalendarEvent['start']) {
   return raw ? new Date(raw) : undefined;
 }
 
-function buildTimeline(events: CalendarEvent[], currentMinute: number) {
-  const dayStart = new Date();
-  dayStart.setHours(0, 0, 0, 0);
+function buildTimeline(
+  events: CalendarEvent[],
+  currentMinute: number,
+  referenceDay: Date,
+  includeTomorrow: boolean,
+) {
+  const maximumMinute = includeTomorrow ? 2880 : 1440;
 
   const allDay: ScheduleItem[] = [];
   const timed: Omit<TimelineItem, 'lane' | 'laneCount' | 'visualEndMinute'>[] = [];
@@ -83,8 +94,10 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
     const end = getEventDate(event.end);
     if (!start || !end) return;
 
-    const startMinute = Math.max(0, Math.min(1440, (start.getTime() - dayStart.getTime()) / 60000));
-    const rawEndMinute = Math.max(0, Math.min(1440, (end.getTime() - dayStart.getTime()) / 60000));
+    const startMinute = clamp(
+      minuteFromLocalDay(start, referenceDay), 0, maximumMinute);
+    const rawEndMinute = clamp(
+      minuteFromLocalDay(end, referenceDay), 0, maximumMinute);
     const endMinute = Math.max(startMinute + 1, rawEndMinute);
 
     timed.push({
@@ -107,9 +120,10 @@ function buildTimeline(events: CalendarEvent[], currentMinute: number) {
     currentMinute,
   );
   let startHour = Math.max(0, Math.floor(earliestMinute / 60) - 1);
-  let endHour = Math.min(24, Math.ceil(latestMinute / 60) + 1);
+  const maximumHour = includeTomorrow ? 48 : 24;
+  let endHour = Math.min(maximumHour, Math.ceil(latestMinute / 60) + 1);
   if (endHour - startHour < 8) {
-    endHour = Math.min(24, startHour + 8);
+    endHour = Math.min(maximumHour, startHour + 8);
     startHour = Math.max(0, endHour - 8);
   }
 
@@ -265,6 +279,7 @@ export default function TodayScreen() {
     isGoogleCalendarConfigured,
     isLoading,
     openEvent: openCalendarEvent,
+    refresh,
     source,
     syncError,
     updateEvent,
@@ -277,29 +292,34 @@ export default function TodayScreen() {
   const autoScrollDirection = useRef<-1 | 0 | 1>(0);
   const dragStateRef = useRef<DragState | undefined>(undefined);
   const lastDragTranslation = useRef(0);
-  const scrollOffset = useRef(0);
+  const scrollOffset = useRef(retainedTimelineScrollOffset);
   const scrollView = useRef<ScrollView>(null);
   const timelineViewport = useRef({ bottom: 0, height: 0, top: 0 });
   const currentMinute = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
+  const showTomorrow = shouldShowTomorrow(now);
   const displayedEvents = useMemo(() => deduplicateCalendarEvents(events), [events]);
   const timeline = useMemo(
-    () => buildTimeline(displayedEvents, currentMinute),
-    [currentMinute, displayedEvents],
+    () => buildTimeline(displayedEvents, currentMinute, now, showTomorrow),
+    [currentMinute, displayedEvents, now, showTomorrow],
   );
   const pixelsPerMinute = timeline.hourHeight / 60;
   const timelineHeight = (timeline.endHour - timeline.startHour) * timeline.hourHeight;
   const currentTimeTop = (currentMinute - timeline.startHour * 60) * pixelsPerMinute;
   const showCurrentTime =
     currentMinute >= timeline.startHour * 60 && currentMinute <= timeline.endHour * 60;
-  const todayLabel = useMemo(
-    () =>
-      new Intl.DateTimeFormat(undefined, {
-        day: 'numeric',
-        month: 'short',
-        weekday: 'short',
-      }).format(new Date()),
-    [],
-  );
+  const showTomorrowDivider =
+    showTomorrow && timeline.startHour <= 24 && timeline.endHour >= 24;
+  const todayLabel = useMemo(() => {
+    const formatter = new Intl.DateTimeFormat(undefined, {
+      day: 'numeric',
+      month: 'short',
+      weekday: 'short',
+    });
+    const today = formatter.format(now);
+    return showTomorrow
+      ? `${today} - tomorrow ${formatter.format(nextLocalDay(now))}`
+      : today;
+  }, [now, showTomorrow]);
   const panResponder = useMemo(
     () =>
       PanResponder.create({
@@ -317,6 +337,23 @@ export default function TodayScreen() {
     const timer = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(timer);
   }, []);
+
+  const previousShowTomorrow = useRef(showTomorrow);
+  useEffect(() => {
+    if (previousShowTomorrow.current === showTomorrow) return;
+    previousShowTomorrow.current = showTomorrow;
+    void refresh();
+  }, [refresh, showTomorrow]);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      scrollView.current?.scrollTo({
+        animated: false,
+        y: retainedTimelineScrollOffset,
+      });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [timelineHeight]);
 
   const setDragSnapshot = useCallback((next?: DragState) => {
     dragStateRef.current = next;
@@ -337,6 +374,7 @@ export default function TodayScreen() {
       const durationMinutes = current.item.endMinute - current.item.startMinute;
       const snapped = snappedStartMinute({
         durationMinutes,
+        maximumMinute: timeline.endHour * 60,
         originalStartMinute: current.item.startMinute,
         pixelsPerMinute,
         scrollDelta: scrollOffset.current - current.originalScrollOffset,
@@ -350,10 +388,11 @@ export default function TodayScreen() {
         current.item.id,
         targetStartMinute,
         targetStartMinute + durationMinutes,
+        now,
       );
       setDragSnapshot({ ...current, conflicts, targetStartMinute });
     },
-    [displayedEvents, pixelsPerMinute, setDragSnapshot, timeline.endHour, timeline.startHour],
+    [displayedEvents, now, pixelsPerMinute, setDragSnapshot, timeline.endHour, timeline.startHour],
   );
 
   const startDrag = useCallback(
@@ -398,7 +437,7 @@ export default function TodayScreen() {
       setPendingRecurringDrop(undefined);
       setDragSnapshot({ ...drop, saving: true });
       try {
-        const changes = shiftedEventTimes(drop.item.calendarEvent, drop.targetStartMinute);
+        const changes = shiftedEventTimes(drop.item.calendarEvent, drop.targetStartMinute, now);
         await updateEvent(
           drop.item.id,
           changes,
@@ -420,7 +459,7 @@ export default function TodayScreen() {
         );
       }
     },
-    [cancelDrag, setDragSnapshot, updateEvent],
+    [cancelDrag, now, setDragSnapshot, updateEvent],
   );
 
   const finishDrag = useCallback(() => {
@@ -440,6 +479,7 @@ export default function TodayScreen() {
 
   const handleTimelineScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
     scrollOffset.current = event.nativeEvent.contentOffset.y;
+    retainedTimelineScrollOffset = event.nativeEvent.contentOffset.y;
   }, []);
 
   const measureTimelineViewport = useCallback(() => {
@@ -664,7 +704,45 @@ export default function TodayScreen() {
             )}
 
             <View style={[styles.timeline, { height: timelineHeight }]}>
-              {timeline.hours.map((hour) => (
+              <LinearGradient
+                colors={[
+                  'rgba(116, 157, 211, 0.07)',
+                  'rgba(250, 211, 74, 0.10)',
+                  'rgba(250, 211, 74, 0.06)',
+                  'rgba(244, 154, 111, 0.09)',
+                  'rgba(116, 157, 211, 0.10)',
+                ]}
+                locations={[0, 0.25, 0.45, 0.72, 1]}
+                pointerEvents="none"
+                style={[
+                  styles.dayAtmosphere,
+                  {
+                    height: timeline.hourHeight * 24,
+                    top: -timeline.startHour * timeline.hourHeight,
+                  },
+                ]}
+              />
+              {showTomorrow && (
+                <LinearGradient
+                  colors={[
+                    'rgba(102, 151, 205, 0.10)',
+                    'rgba(246, 218, 116, 0.08)',
+                    'rgba(246, 218, 116, 0.05)',
+                    'rgba(224, 151, 125, 0.08)',
+                    'rgba(102, 151, 205, 0.12)',
+                  ]}
+                  locations={[0, 0.25, 0.45, 0.72, 1]}
+                  pointerEvents="none"
+                  style={[
+                    styles.dayAtmosphere,
+                    {
+                      height: timeline.hourHeight * 24,
+                      top: (24 - timeline.startHour) * timeline.hourHeight,
+                    },
+                  ]}
+                />
+              )}
+              {timeline.hours.filter((hour) => !(showTomorrowDivider && hour === 24)).map((hour) => (
                 <View
                   key={hour}
                   pointerEvents="none"
@@ -676,6 +754,23 @@ export default function TodayScreen() {
                   <View style={styles.hourRule} />
                 </View>
               ))}
+
+              {showTomorrowDivider && (
+                <View
+                  pointerEvents="none"
+                  style={[
+                    styles.tomorrowRow,
+                    { top: (24 - timeline.startHour) * timeline.hourHeight },
+                  ]}>
+                  <Text style={styles.tomorrowLabel}>
+                    TOMORROW - {new Intl.DateTimeFormat(undefined, {
+                      day: 'numeric',
+                      month: 'short',
+                    }).format(nextLocalDay(now))}
+                  </Text>
+                  <View style={styles.tomorrowRule} />
+                </View>
+              )}
 
               {showCurrentTime && (
                 <View
@@ -1068,6 +1163,43 @@ const styles = StyleSheet.create({
   },
   timeline: {
     position: 'relative',
+    overflow: 'hidden',
+  },
+  dayAtmosphere: {
+    left: 74,
+    position: 'absolute',
+    right: 0,
+  },
+  tomorrowRow: {
+    alignItems: 'center',
+    flexDirection: 'row',
+    left: 0,
+    position: 'absolute',
+    right: 0,
+    transform: [{ translateY: -11 }],
+    zIndex: 1,
+  },
+  tomorrowLabel: {
+    backgroundColor: colors.aqua,
+    borderColor: colors.ink,
+    borderRadius: 8,
+    borderWidth: 1.5,
+    color: colors.ink,
+    fontFamily: fonts.handBold,
+    fontSize: 12,
+    overflow: 'hidden',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    textAlign: 'center',
+    width: 112,
+  },
+  tomorrowRule: {
+    borderTopColor: colors.ink,
+    borderTopWidth: 2,
+    borderStyle: 'dashed',
+    flex: 1,
+    marginLeft: 6,
+    opacity: 0.55,
   },
   timelineScroll: {
     flex: 1,

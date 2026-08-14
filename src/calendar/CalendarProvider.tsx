@@ -10,6 +10,7 @@ import {
 
 import { DemoCalendarRepository } from '@/calendar/demoCalendar';
 import { deviceCalendar } from '@/calendar/deviceCalendar';
+import { nextLocalDay, shouldShowTomorrow } from '@/calendar/homeRange';
 import type { DeviceCalendarPermissionStatus } from '@/calendar/deviceCalendar.types';
 import { googleCalendar } from '@/calendar/googleCalendar';
 import type {
@@ -56,6 +57,13 @@ type CalendarContextValue = {
 const CalendarContext = createContext<CalendarContextValue | null>(null);
 const demoRepository = new DemoCalendarRepository();
 
+async function listHomeEvents(repository: CalendarRepository, now = new Date()) {
+  const today = await repository.listDay(now);
+  if (!shouldShowTomorrow(now)) return today;
+  return [...today, ...(await repository.listDay(nextLocalDay(now)))];
+}
+
+
 function normalizedRouteId(value?: string) {
   if (!value) return value;
   let normalized = value;
@@ -92,7 +100,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     setIsLoading(true);
     setSyncError(undefined);
     try {
-      setEvents(await repository.listDay(new Date()));
+      setEvents(await listHomeEvents(repository));
     } catch (error) {
       setSyncError(error instanceof Error ? error.message : 'Calendar sync failed');
     } finally {
@@ -105,7 +113,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     setSyncError(undefined);
     try {
       const connection = await deviceCalendar.connect();
-      const nextEvents = await connection.repository.listDay(new Date());
+      const nextEvents = await listHomeEvents(connection.repository);
       setCalendarAccountLabel(connection.accountLabel);
       setCalendarCount(connection.calendarCount);
       setEvents(nextEvents);
@@ -126,7 +134,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     setSyncError(undefined);
     try {
       const connection = await googleCalendar.connect();
-      const nextEvents = await connection.repository.listDay(new Date());
+      const nextEvents = await listHomeEvents(connection.repository);
       setCalendarAccountLabel(connection.accountLabel);
       setCalendarCount(connection.calendarCount);
       setEvents(nextEvents);
@@ -146,7 +154,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     let isCurrent = true;
     const loadDemo = async () => {
       try {
-        const nextEvents = await demoRepository.listDay(new Date());
+        const nextEvents = await listHomeEvents(demoRepository);
         if (isCurrent) setEvents(nextEvents);
       } catch (error) {
         if (isCurrent) {
@@ -216,7 +224,7 @@ export function CalendarProvider({ children }: PropsWithChildren) {
     setSource('demo');
     setConnectionStatus('demo');
     setSyncError(undefined);
-    void demoRepository.listDay(new Date()).then(setEvents);
+    void listHomeEvents(demoRepository).then(setEvents);
   }, []);
 
   const disconnectGoogleCalendar = useCallback(async () => {

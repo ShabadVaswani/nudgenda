@@ -134,6 +134,29 @@ async function requestText(options: {
   }
   throw lastError ?? new Error(`${options.model} request failed.`);
 }
+export function normalizeNotebookSourceIds(
+  notebook: string,
+  selectedEvidence: ContextEvidence[],
+) {
+  const knownIds = new Set(selectedEvidence.map((item) => item.id));
+  const fullIdsByBareId = new Map<string, string[]>();
+  selectedEvidence.forEach((item) => {
+    const bareId = item.id.split('/').at(-1);
+    if (!bareId) return;
+    fullIdsByBareId.set(bareId, [...(fullIdsByBareId.get(bareId) ?? []), item.id]);
+  });
+
+  return notebook.replace(/\[source:\s*([^\]]+)\]/gi, (_citation, value: string) => {
+    const normalizedIds = value.split(',').map((rawId) => {
+      const id = rawId.trim();
+      if (knownIds.has(id)) return id;
+      const candidates = fullIdsByBareId.get(id);
+      return candidates?.length === 1 ? candidates[0] : id;
+    });
+    return `[source: ${normalizedIds.join(', ')}]`;
+  });
+}
+
 
 export function parseSelectedUserEvidenceIds(output: string, knownIds: Set<string>) {
   return [
@@ -172,7 +195,8 @@ Use exactly these headings:
 ## Historical or one-off context
 
 Rules:
-- Every bullet must end with one or more source IDs in the form [source: user-001].
+- Every bullet must end with one or more exact evidence IDs in the form [source: import/user-001].
+- Preserve the complete supplied ID, including everything before and after the slash.
 - Preserve qualifiers such as at least, only, every time, low priority, and if/then.
 - A one-day wake time, meeting, meal, or workout is historical, not a stable preference.
 - If wording is garbled or supports multiple meanings, put it under Unresolved or ambiguous.
@@ -243,13 +267,15 @@ export async function runContextNotebookPipeline(
     user: `Existing context notebook:\n${options.existingNotebook || '(none yet)'}\n\nNew source: ${options.sourceName}\n\n${writerEvidence}`,
   });
 
+  const notebook = normalizeNotebookSourceIds(writer.content, selectedEvidence);
+
   return {
     completedAt: new Date().toISOString(),
     evidenceCharacters: preprocessing.evidenceCharacters,
     evidenceCount: preprocessing.evidence.length,
     filterModel,
     filterUsage,
-    notebook: writer.content,
+    notebook,
     originalCharacters: preprocessing.originalCharacters,
     selectedEvidence,
     selectedEvidenceCount: selectedEvidence.length,

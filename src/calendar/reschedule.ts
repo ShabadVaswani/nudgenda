@@ -1,3 +1,4 @@
+import { minuteFromLocalDay } from './homeRange.ts';
 import type { CalendarEvent, CalendarEventDraft } from '@/calendar/types';
 
 export const RESCHEDULE_SNAP_MINUTES = 15;
@@ -13,18 +14,20 @@ export function clamp(value: number, minimum: number, maximum: number) {
 
 export function snappedStartMinute({
   durationMinutes,
+  maximumMinute = 1440,
   originalStartMinute,
   pixelsPerMinute,
   scrollDelta = 0,
   translationY,
 }: {
   durationMinutes: number;
+  maximumMinute?: number;
   originalStartMinute: number;
   pixelsPerMinute: number;
   scrollDelta?: number;
   translationY: number;
 }) {
-  const maximum = Math.max(0, 1440 - durationMinutes);
+  const maximum = Math.max(0, maximumMinute - durationMinutes);
   const rawMinute = originalStartMinute + (translationY + scrollDelta) / pixelsPerMinute;
   return clamp(
     Math.round(rawMinute / RESCHEDULE_SNAP_MINUTES) * RESCHEDULE_SNAP_MINUTES,
@@ -36,6 +39,7 @@ export function snappedStartMinute({
 export function shiftedEventTimes(
   event: CalendarEvent,
   targetStartMinute: number,
+  referenceDay?: Date,
 ): Pick<CalendarEventDraft, 'start' | 'end'> {
   const originalStart = eventDate(event.start);
   const originalEnd = eventDate(event.end);
@@ -44,7 +48,7 @@ export function shiftedEventTimes(
   }
 
   const duration = Math.max(60_000, originalEnd.getTime() - originalStart.getTime());
-  const nextStart = new Date(originalStart);
+  const nextStart = new Date(referenceDay ?? originalStart);
   nextStart.setHours(0, targetStartMinute, 0, 0);
   const nextEnd = new Date(nextStart.getTime() + duration);
 
@@ -65,14 +69,19 @@ export function conflictingEvents(
   movingEventId: string,
   targetStartMinute: number,
   targetEndMinute: number,
+  referenceDay?: Date,
 ) {
   return events.filter((event) => {
     if (event.id === movingEventId || !event.start.dateTime || !event.end.dateTime) return false;
     const start = eventDate(event.start);
     const end = eventDate(event.end);
     if (!start || !end) return false;
-    const startMinute = start.getHours() * 60 + start.getMinutes() + start.getSeconds() / 60;
-    const endMinute = end.getHours() * 60 + end.getMinutes() + end.getSeconds() / 60;
+    const startMinute = referenceDay
+      ? minuteFromLocalDay(start, referenceDay)
+      : start.getHours() * 60 + start.getMinutes() + start.getSeconds() / 60;
+    const endMinute = referenceDay
+      ? minuteFromLocalDay(end, referenceDay)
+      : end.getHours() * 60 + end.getMinutes() + end.getSeconds() / 60;
     return startMinute < targetEndMinute && endMinute > targetStartMinute;
   });
 }
